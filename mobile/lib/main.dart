@@ -60,7 +60,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // 2) CONNECT TO GAME SOCKET
   void connectGame(String id) {
     gameChannel = IOWebSocketChannel.connect(
-      Uri.parse("ws://10.1.4.5:8080/rooms/$id"),
+      Uri.parse("wss://crusader-arming-riverboat.ngrok-free.dev/rooms"),
     );
 
     gameChannel.stream.listen((message) {
