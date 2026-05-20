@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -184,15 +185,47 @@ func (c *ChessHub) StartGame(userID string) error {
 
 		mt, message, err := players[color].ActiveConn.ReadMessage()
 		if err != nil || mt == websocket.CloseMessage {
+			fmt.Printf("user %s left the game\n", players[color].ID)
+			fmt.Printf("%s", error.Error(err))
 			break
 		}
+		// lenMoves := len(game.Moves())
 
-		if err := game.MoveStr(string(message)); err != nil {
-			players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
-			continue
+		// if lenMoves > 0 {
+		// 	fmt.Printf(" [*] THIS IS A CASTLE MOVE %s:", game.Moves()[lenMoves-1].String()+"\n")
+		// }
+		castle := false
+		println("is it castle 1 ==========> ", castle)
+
+		castle = string(message) == "Ke1c1" || string(message) == "Ke8c8" || string(message) == "Ke1g1" || string(message) == "Ke8g8"
+		// if lenMoves > 0 {
+		// if game.Moves()[lenMoves-1].String() == "e1c1" || game.Moves()[lenMoves-1].String() == "e8c8" || game.Moves()[lenMoves-1].String() == "e1g1" || game.Moves()[lenMoves-1].String() == "e8g8" {
+		// castle = game.Moves()[lenMoves-1].HasTag(chess.KingSideCastle) || game.Moves()[lenMoves-1].HasTag(chess.QueenSideCastle)
+		// castle = game.Moves()[lenMoves-1].String() == "Ke1c1" || game.Moves()[lenMoves-1].String() == "Ke8c8" || game.Moves()[lenMoves-1].String() == "Ke1g1" || game.Moves()[lenMoves-1].String() == "Ke8g8"
+
+		// if castle {
+		// fmt.Printf(" [*] THIS IS A CASTLE MOVE %s:", game.Moves()[lenMoves-1].String()+"\n")
+		// continue
+		// }
+		// }
+		println("is it castle 2 ==========> ", castle)
+
+		if err := game.MoveStr(string(message)); err != nil && !castle {
+			// ✅ بعث "invalid_move" باش Flutter يعرف يرجع myTurn = true
+			// fmt.Printf("ttttttttttttttttt played %s:", string(message)+"\n")
+			// fmt.Printf("=========> " + err.Error() + "\n")
+			players[color].ActiveConn.WriteMessage(
+				websocket.TextMessage,
+				[]byte("invalid_move"),
+			)
+			log.Printf("invalid move from user %s: %s — %s\n",
+				players[color].ID, string(message), err.Error())
+			//continue
 		}
+		fmt.Println("UUUUUUUUU")
 
 		if players[oppositeColor].ActiveConn == nil {
+			fmt.Println("----------BROCK here----------")
 			break
 		}
 
@@ -257,9 +290,7 @@ func (s *Server) PickRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) JoinRoom(w http.ResponseWriter, r *http.Request) {
-	var (
-		clientID = mux.Vars(r)["client_id"]
-	)
+	clientID := mux.Vars(r)["client_id"]
 
 	conn, _ := upgrader.Upgrade(w, r, nil)
 	defer conn.Close()

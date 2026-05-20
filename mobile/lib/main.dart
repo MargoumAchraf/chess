@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:flutter_chess_board/flutter_chess_board.dart';
 
 void main() {
   runApp(const MyApp());
@@ -29,20 +30,35 @@ class _LobbyScreenState extends State<LobbyScreen> {
   WebSocketChannel? lobbyChannel;
   WebSocketChannel? gameChannel;
 
+  final ChessBoardController boardController = ChessBoardController();
+
   String userId = "";
+  String username = "";
   String color = "";
   String status = "idle";
-  List<String> messages = [];
+  bool myTurn = false;
+  bool _isApplyingOpponentMove = false;
+  int _lastHistoryLength = 0;
 
-  final TextEditingController moveController = TextEditingController();
-  final TextEditingController nameController = TextEditingController(); // ← زيدها
+  // ── Highlight state ──────────────────────────────────────────
+  String? _selectedSquare;
+  List<String> _validMoveSquares = [];
+
+  List<String> messages = [];
+  final TextEditingController nameController = TextEditingController();
+
+  // ======================================================
+  // LOBBY
+  // ======================================================
 
   void connectLobby() {
     final name = nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => messages.add("⚠️ دخل سميتك أولا!"));
+      addMessage("⚠️ Enter name first");
       return;
     }
+
+    username = name;
 
     lobbyChannel = IOWebSocketChannel.connect(
       Uri.parse("wss://crusader-arming-riverboat.ngrok-free.dev/rooms"),
@@ -50,155 +66,468 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     setState(() => status = "waiting");
 
-    // ← سيفط الاسم أول حاجة
-    lobbyChannel!.sink.add(name);
-
-    lobbyChannel!.stream.listen((message) {
-      final msg = message.toString();
-
-      if (userId.isEmpty) {
-        setState(() {
-          userId = msg;
-          messages.add("✅ USER ID: $userId");
-        });
-        connectGame(userId);
-      }
-    }, onError: (e) {
-      setState(() => messages.add("❌ Lobby error: $e"));
+    lobbyChannel!.stream.listen((msg) {
+      handleLobby(msg.toString());
     });
   }
 
-  void connectGame(String id) {
+  void handleLobby(String msg) {
+    addMessage("Lobby: $msg");
+    if (userId.isEmpty) {
+      userId = msg.trim();
+      connectGame(userId);
+    }
+  }
+
+  // ======================================================
+  // GAME SOCKET
+  // ======================================================
+
+  void connectGame(String clientId) {
     gameChannel = IOWebSocketChannel.connect(
-      Uri.parse("wss://crusader-arming-riverboat.ngrok-free.dev/rooms/$id"),
+      Uri.parse(
+        "wss://crusader-arming-riverboat.ngrok-free.dev/rooms/$clientId",
+      ),
     );
 
-    gameChannel!.stream.listen((message) {
-      final msg = message.toString();
+    gameChannel!.stream.listen((msg) {
+      handleGame(msg.toString());
+    });
 
-      if (color.isEmpty) {
-        setState(() {
-          color = msg;
-          status = "playing";
-          messages.add("🎨 Color: $color");
-        });
-        return;
-      }
+    addMessage("Joined room: $clientId");
+  }
 
-      if (msg == "1-0" || msg == "0-1" || msg == "1/2-1/2") {
-        setState(() {
-          messages.add("🏁 Outcome: $msg");
-          status = "idle";
-        });
-        return;
-      }
+  // ======================================================
+  // GAME LOGIC
+  // ======================================================
 
-      setState(() => messages.add("♟️ Opponent move: $msg"));
-    }, onError: (e) {
-      setState(() => messages.add("❌ Game error: $e"));
-    }, onDone: () {
+  void handleGame(String msg) {
+    addMessage(msg);
+    print("Received from game socket: $msg");
+    final plain = msg.trim();
+
+    // 1. Color assignment
+    if (plain == "white" || plain == "black") {
       setState(() {
-        messages.add("🔌 Game closed");
-        status = "idle";
+        color = plain;
+        status = "playing";
+        myTurn = color == "white";
       });
+      return;
+    }
+
+    // 2. Invalid move
+    if (plain == "invalid_move") {
+      setState(() => myTurn = true);
+      addMessage("⚠️ Invalid move, try again");
+      return;
+    }
+
+    // 3. Opponent move — LongAlgebraicNotation
+    if (RegExp(
+      r'^[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?$',
+    ).hasMatch(plain)) {
+      _applyOpponentMove(plain);
+      return;
+    }
+
+    // 4. Game over result
+    if (plain == "1-0" || plain == "0-1" || plain == "1/2-1/2") {
+      addMessage("🏁 Game Over: $plain");
+      boardController.resetBoard();
+      setState(() {
+        status = "idle";
+        myTurn = false;
+        color = "";
+        userId = "";
+        _lastHistoryLength = 0;
+        _selectedSquare = null;
+        _validMoveSquares = [];
+      });
+      return;
+    }
+
+    // 5. Game method
+    if (plain == "Checkmate" ||
+        plain == "Stalemate" ||
+        plain == "DrawOffer" ||
+        plain == "ThreefoldRepetition" ||
+        plain == "FivefoldRepetition" ||
+        plain == "FiftyMoveRule" ||
+        plain == "SeventyFiveMoveRule" ||
+        plain == "InsufficientMaterial") {
+      addMessage("📋 Method: $plain");
+      return;
+    }
+
+    // 6. Fallback
+    addMessage("⚠️ Server: $plain");
+  }
+
+  // ======================================================
+  // SEND MOVE
+  // ======================================================
+
+  void sendMove() {
+    if (_isApplyingOpponentMove) return;
+    if (!myTurn) return;
+
+    final history = boardController.game.history;
+    if (history.length <= _lastHistoryLength) return;
+
+    _lastHistoryLength = history.length;
+
+    final move = history.last.move;
+    final from = move.fromAlgebraic;
+    final to = move.toAlgebraic;
+    final promotion =
+        move.promotion != null ? move.promotion!.name.toLowerCase()[0] : '';
+
+    final isCapture = (move.flags & Chess.BITS_CAPTURE) != 0 ||
+        (move.flags & Chess.BITS_EP_CAPTURE) != 0;
+
+    final piece = boardController.game.get(to);
+    String piecePrefix = '';
+    if (piece != null) {
+      switch (piece.type) {
+        case PieceType.KNIGHT:
+          piecePrefix = 'N';
+          break;
+        case PieceType.BISHOP:
+          piecePrefix = 'B';
+          break;
+        case PieceType.ROOK:
+          piecePrefix = 'R';
+          break;
+        case PieceType.QUEEN:
+          piecePrefix = 'Q';
+          break;
+        case PieceType.KING:
+          piecePrefix = 'K';
+          break;
+        default:
+          piecePrefix = '';
+      }
+    }
+
+    final lan = isCapture
+        ? '$piecePrefix${from}x$to$promotion'
+        : '$piecePrefix$from$to$promotion';
+
+    print("📤 Sending: $lan");
+    gameChannel?.sink.add(lan);
+
+    setState(() {
+      myTurn = false;
+      _selectedSquare = null;
+      _validMoveSquares = [];
+    });
+
+    addMessage("You: $lan");
+  }
+
+  // ======================================================
+  // APPLY OPPONENT MOVE
+  // ======================================================
+
+  void _applyOpponentMove(String lan) {
+    String clean = lan;
+
+    // Strip piece prefix: "Nf4xd5" → "f4xd5"
+    if (clean.isNotEmpty && RegExp(r'^[NBRQK]').hasMatch(clean)) {
+      clean = clean.substring(1);
+    }
+
+    // Strip capture 'x': "f4xd5" → "f4d5"
+    clean = clean.replaceAll('x', '');
+
+    if (clean.length < 4) return;
+
+    final from = clean.substring(0, 2);
+    final to = clean.substring(2, 4);
+    final promotion = clean.length > 4 ? clean.substring(4, 5) : 'q';
+
+    print("♟ Applying opponent move: $from → $to");
+
+    _isApplyingOpponentMove = true;
+    boardController.makeMoveWithPromotion(
+      from: from,
+      to: to,
+      pieceToPromoteTo: promotion,
+    );
+    _isApplyingOpponentMove = false;
+
+    _lastHistoryLength = boardController.game.history.length;
+
+    setState(() {
+      myTurn = true;
+      _selectedSquare = null;
+      _validMoveSquares = [];
     });
   }
 
-  void sendMove() {
-    final move = moveController.text.trim();
-    if (move.isEmpty || gameChannel == null) return;
+  // ======================================================
+  // HIGHLIGHT — tap a square to select / show valid moves
+  // ======================================================
 
-    gameChannel!.sink.add(move);
+  void _onSquareTapped(String square) {
+    if (!myTurn || _isApplyingOpponentMove) return;
+
+    final game = boardController.game;
+
+    // If a square is already selected and the tapped square is a valid target
+    if (_selectedSquare != null && _validMoveSquares.contains(square)) {
+      boardController.makeMove(from: _selectedSquare!, to: square);
+      setState(() {
+        _selectedSquare = null;
+        _validMoveSquares = [];
+      });
+      sendMove();
+      return;
+    }
+
+    // Check if there's a friendly piece on this square
+    final piece = game.get(square);
+    if (piece == null) {
+      setState(() {
+        _selectedSquare = null;
+        _validMoveSquares = [];
+      });
+      return;
+    }
+
+    final isMyPiece = (color == 'white' && piece.color == Color.WHITE) ||
+        (color == 'black' && piece.color == Color.BLACK);
+
+    if (!isMyPiece) {
+      setState(() {
+        _selectedSquare = null;
+        _validMoveSquares = [];
+      });
+      return;
+    }
+
+    // Compute legal target squares
+    final moves =
+        game.moves({'square': square, 'verbose': true}) as List<dynamic>;
+    final targets = moves.map((m) => (m as Map)['to'] as String).toList();
+
     setState(() {
-      messages.add("➡️ You played: $move");
-      moveController.clear();
+      _selectedSquare = square;
+      _validMoveSquares = targets;
     });
+  }
+
+  // ======================================================
+  // OVERLAY BUILDER
+  // ======================================================
+
+  Widget _buildMoveOverlay(double boardSize) {
+    return GestureDetector(
+      onTapDown: (details) {
+        final squareSize = boardSize / 8;
+        final col = (details.localPosition.dx / squareSize).floor();
+        final row = (details.localPosition.dy / squareSize).floor();
+        if (col < 0 || col > 7 || row < 0 || row > 7) return;
+
+        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        final ranks =
+            color == 'black' ? ['1', '2', '3', '4', '5', '6', '7', '8'] : ['8', '7', '6', '5', '4', '3', '2', '1'];
+        final filesOrdered =
+            color == 'black' ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : files;
+
+        _onSquareTapped('${filesOrdered[col]}${ranks[row]}');
+      },
+      child: CustomPaint(
+        size: Size(boardSize, boardSize),
+        painter: _MoveHighlightPainter(
+          selectedSquare: _selectedSquare,
+          validSquares: _validMoveSquares,
+          isBlack: color == 'black',
+        ),
+      ),
+    );
+  }
+
+  // ======================================================
+  // HELPERS
+  // ======================================================
+
+  void addMessage(String m) {
+    setState(() => messages.insert(0, m));
   }
 
   @override
   void dispose() {
     lobbyChannel?.sink.close();
     gameChannel?.sink.close();
-    moveController.dispose();
     nameController.dispose();
     super.dispose();
   }
+
+  // ======================================================
+  // UI
+  // ======================================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Chess Lobby"),
+        title: const Text("Chess Multiplayer"),
         backgroundColor: Colors.brown,
-        foregroundColor: Colors.white,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            Text(
-              "Status: $status ${color.isNotEmpty ? '| $color' : ''}",
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      body: Column(
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.brown.shade100,
+              borderRadius: BorderRadius.circular(8),
             ),
+            child: Text(
+              "Status: $status${color.isNotEmpty ? ' | Playing as $color' : ''}",
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+          const SizedBox(height: 8),
 
-            const SizedBox(height: 10),
-
-            // ← input ديال الاسم
-            if (status == "idle") ...[
-              TextField(
+          // ── Lobby / waiting ──
+          if (status == "idle" || status == "waiting") ...[
+            Padding(
+              padding: const EdgeInsets.all(10),
+              child: TextField(
                 controller: nameController,
                 decoration: const InputDecoration(
-                  hintText: "دخل سميتك...",
+                  labelText: "Your Name",
                   border: OutlineInputBorder(),
-                  labelText: "الاسم",
                 ),
               ),
-              const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: connectLobby,
-                child: const Text("Connect to Lobby"),
+            ),
+            ElevatedButton(
+              onPressed: status == "idle" ? connectLobby : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.brown,
+                foregroundColor: Colors.white,
               ),
-            ],
-
-            const SizedBox(height: 10),
-
-            if (status == "playing") ...[
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: moveController,
-                      decoration: const InputDecoration(
-                        hintText: "e.g. e2e4",
-                        border: OutlineInputBorder(),
-                        labelText: "Your Move",
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton(
-                    onPressed: sendMove,
-                    child: const Text("Send"),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-            ],
-
-            Expanded(
-              child: ListView.builder(
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Text(messages[index]),
-                  );
-                },
+              child: Text(
+                status == "waiting" ? "Waiting for opponent…" : "Join Game",
               ),
             ),
           ],
-        ),
+
+          // ── Playing ──
+          if (status == "playing") ...[
+            Text(
+              myTurn ? "♟ Your turn" : "⏳ Opponent's turn",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: myTurn ? Colors.green : Colors.orange,
+              ),
+            ),
+            const SizedBox(height: 4),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final boardSize = constraints.maxWidth;
+                return Stack(
+                  children: [
+                    ChessBoard(
+                      controller: boardController,
+                      enableUserMoves: myTurn,
+                      boardOrientation: color == "black"
+                          ? PlayerColor.black
+                          : PlayerColor.white,
+                      onMove: () => sendMove(),
+                    ),
+                    // Highlight overlay (pointer events pass through when idle)
+                    if (myTurn)
+                      Positioned.fill(
+                        child: _buildMoveOverlay(boardSize),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ],
+
+          const Divider(),
+          Expanded(
+            child: ListView.builder(
+              reverse: true,
+              itemCount: messages.length,
+              itemBuilder: (_, i) => Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: Text(
+                  messages[i],
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+// ======================================================
+// CUSTOM PAINTER — selected square + valid-move dots
+// ======================================================
+
+class _MoveHighlightPainter extends CustomPainter {
+  final String? selectedSquare;
+  final List<String> validSquares;
+  final bool isBlack;
+
+  const _MoveHighlightPainter({
+    required this.selectedSquare,
+    required this.validSquares,
+    required this.isBlack,
+  });
+
+  /// Converts e.g. "e4" → top-left Offset of that square on the canvas.
+  Offset _squareToOffset(String sq, double squareSize) {
+    final files = isBlack
+        ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
+        : ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    final ranks = isBlack
+        ? ['1', '2', '3', '4', '5', '6', '7', '8']
+        : ['8', '7', '6', '5', '4', '3', '2', '1'];
+
+    final col = files.indexOf(sq[0]);
+    final row = ranks.indexOf(sq[1]);
+    return Offset(col * squareSize, row * squareSize);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final squareSize = size.width / 8;
+
+    // 1. Yellow tint on the selected square
+    if (selectedSquare != null) {
+      final offset = _squareToOffset(selectedSquare!, squareSize);
+      canvas.drawRect(
+        Rect.fromLTWH(offset.dx, offset.dy, squareSize, squareSize),
+        Paint()..color = Colors.yellow.withOpacity(0.45),
+      );
+    }
+
+    // 2. Green dots on every valid target square
+    final dotPaint = Paint()..color = Colors.green.withOpacity(0.55);
+    for (final sq in validSquares) {
+      final offset = _squareToOffset(sq, squareSize);
+      final center = Offset(
+        offset.dx + squareSize / 2,
+        offset.dy + squareSize / 2,
+      );
+      canvas.drawCircle(center, squareSize * 0.18, dotPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_MoveHighlightPainter old) =>
+      old.selectedSquare != selectedSquare ||
+      old.validSquares != validSquares ||
+      old.isBlack != isBlack;
 }
