@@ -125,7 +125,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     // 3. Opponent move — LongAlgebraicNotation
     if (RegExp(
-      r'^[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?$',
+      r'^(O-O-O|O-O|[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?)$',
     ).hasMatch(plain)) {
       _applyOpponentMove(plain);
       return;
@@ -180,39 +180,52 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final move = history.last.move;
     final from = move.fromAlgebraic;
     final to = move.toAlgebraic;
-    final promotion =
-        move.promotion != null ? move.promotion!.name.toLowerCase()[0] : '';
 
-    final isCapture = (move.flags & Chess.BITS_CAPTURE) != 0 ||
-        (move.flags & Chess.BITS_EP_CAPTURE) != 0;
+    // ✅ Detect castling via flags
+    final isKingSideCastle = (move.flags & Chess.BITS_KSIDE_CASTLE) != 0;
+    final isQueenSideCastle = (move.flags & Chess.BITS_QSIDE_CASTLE) != 0;
 
-    final piece = boardController.game.get(to);
-    String piecePrefix = '';
-    if (piece != null) {
-      switch (piece.type) {
-        case PieceType.KNIGHT:
-          piecePrefix = 'N';
-          break;
-        case PieceType.BISHOP:
-          piecePrefix = 'B';
-          break;
-        case PieceType.ROOK:
-          piecePrefix = 'R';
-          break;
-        case PieceType.QUEEN:
-          piecePrefix = 'Q';
-          break;
-        case PieceType.KING:
-          piecePrefix = 'K';
-          break;
-        default:
-          piecePrefix = '';
+    String lan;
+
+    if (isKingSideCastle) {
+      lan = 'O-O';
+    } else if (isQueenSideCastle) {
+      lan = 'O-O-O';
+    } else {
+      final promotion =
+          move.promotion != null ? move.promotion!.name.toLowerCase()[0] : '';
+
+      final isCapture = (move.flags & Chess.BITS_CAPTURE) != 0 ||
+          (move.flags & Chess.BITS_EP_CAPTURE) != 0;
+
+      final piece = boardController.game.get(to);
+      String piecePrefix = '';
+      if (piece != null) {
+        switch (piece.type) {
+          case PieceType.KNIGHT:
+            piecePrefix = 'N';
+            break;
+          case PieceType.BISHOP:
+            piecePrefix = 'B';
+            break;
+          case PieceType.ROOK:
+            piecePrefix = 'R';
+            break;
+          case PieceType.QUEEN:
+            piecePrefix = 'Q';
+            break;
+          case PieceType.KING:
+            piecePrefix = 'K';
+            break;
+          default:
+            piecePrefix = '';
+        }
       }
-    }
 
-    final lan = isCapture
-        ? '$piecePrefix${from}x$to$promotion'
-        : '$piecePrefix$from$to$promotion';
+      lan = isCapture
+          ? '$piecePrefix${from}x$to$promotion'
+          : '$piecePrefix$from$to$promotion';
+    }
 
     print("📤 Sending: $lan");
     gameChannel?.sink.add(lan);
@@ -231,40 +244,55 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // ======================================================
 
   void _applyOpponentMove(String lan) {
-    String clean = lan;
+  print("♟ Raw received: '$lan'");
+  print("♟ Current turn: ${boardController.game.turn == Chess.WHITE ? 'WHITE' : 'BLACK'}");
+  
+  String from, to;
 
-    // Strip piece prefix: "Nf4xd5" → "f4xd5"
+  if (lan == 'O-O') {
+    final isWhite = boardController.game.turn == Chess.WHITE;
+    print("♟ Kingside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
+    from = isWhite ? 'e1' : 'e8';
+    to   = isWhite ? 'g1' : 'g8';
+  } else if (lan == 'O-O-O') {
+    final isWhite = boardController.game.turn == Chess.WHITE;
+    from = isWhite ? 'e1' : 'e8';
+    to   = isWhite ? 'c1' : 'c8';
+  } else {
+    String clean = lan;
     if (clean.isNotEmpty && RegExp(r'^[NBRQK]').hasMatch(clean)) {
       clean = clean.substring(1);
     }
-
-    // Strip capture 'x': "f4xd5" → "f4d5"
     clean = clean.replaceAll('x', '');
-
     if (clean.length < 4) return;
 
-    final from = clean.substring(0, 2);
-    final to = clean.substring(2, 4);
-    final promotion = clean.length > 4 ? clean.substring(4, 5) : 'q';
-
-    print("♟ Applying opponent move: $from → $to");
-
-    _isApplyingOpponentMove = true;
-    boardController.makeMoveWithPromotion(
-      from: from,
-      to: to,
-      pieceToPromoteTo: promotion,
-    );
-    _isApplyingOpponentMove = false;
-
-    _lastHistoryLength = boardController.game.history.length;
-
-    setState(() {
-      myTurn = true;
-      _selectedSquare = null;
-      _validMoveSquares = [];
-    });
+    from = clean.substring(0, 2);
+    to   = clean.substring(2, 4);
   }
+
+  final promotion = (lan.length > 4 && !lan.startsWith('O'))
+      ? lan.substring(lan.length - 1)
+      : 'q';
+
+  print("♟ Making move: $from → $to");
+
+  _isApplyingOpponentMove = true;
+  final result = boardController.makeMoveWithPromotion(
+    from: from,
+    to: to,
+    pieceToPromoteTo: promotion,
+  );
+
+  _isApplyingOpponentMove = false;
+
+  _lastHistoryLength = boardController.game.history.length;
+
+  setState(() {
+    myTurn = true;
+    _selectedSquare = null;
+    _validMoveSquares = [];
+  });
+}
 
   // ======================================================
   // HIGHLIGHT — tap a square to select / show valid moves
@@ -331,8 +359,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
         if (col < 0 || col > 7 || row < 0 || row > 7) return;
 
         const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        final ranks =
-            color == 'black' ? ['1', '2', '3', '4', '5', '6', '7', '8'] : ['8', '7', '6', '5', '4', '3', '2', '1'];
+        final ranks = color == 'black'
+            ? ['1', '2', '3', '4', '5', '6', '7', '8']
+            : ['8', '7', '6', '5', '4', '3', '2', '1'];
         final filesOrdered =
             color == 'black' ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : files;
 
@@ -456,8 +485,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
               reverse: true,
               itemCount: messages.length,
               itemBuilder: (_, i) => Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 child: Text(
                   messages[i],
                   style: const TextStyle(fontSize: 12),
