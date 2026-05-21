@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"regexp"
 	"sync"
 	"sync/atomic"
 
@@ -187,16 +188,57 @@ func (c *ChessHub) StartGame(userID string) error {
 			break
 		}
 
-		if err := game.MoveStr(string(message)); err != nil {
-			players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte(err.Error()))
-			continue
+		// 2. TASHI7: Rejje3 l-message string bach tqdar tkhaddmo f l-Regex o l-Chess package
+		moveStr := string(message)
+
+		// Had l-variable ghadi n-7etou fih l-move object s7i7 melli n-decodawh
+		var finalMove *chess.Move
+		uciRegex := regexp.MustCompile(`^([a-h][1-8])([a-h][1-8])([qrbn])?$`)
+		// 3. Checki wach UCI Format (bhal g7g8q, e2e4)
+		if uciRegex.MatchString(moveStr) {
+			move, err := chess.UCINotation{}.Decode(game.Position(), moveStr)
+			if err != nil {
+				players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte("UCI Move machi valid: "+err.Error()))
+				continue
+			}
+			
+			finalMove = move
+			game.Move(finalMove)
+
+		} else {
+			// 4. Ila machi UCI, n-jarbo Algebraic (bhal e4, Nf3, e8=Q)
+			// Hna 7it MoveStr f l-package kat-la3b direct, khassna n-jbdou l-move object men l-game history
+			if err := game.MoveStr(moveStr); err != nil {
+				players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte("Notation machi valid: "+err.Error()))
+				continue // Kay-rj3 l-nefs l-player y-la3b
+			}
+
+			// N-jbdou l-move li yllah t-la3b bach n-sftoh nishan l-player l-akhar standard
+			moves := game.Moves()
+			if len(moves) > 0 {
+				finalMove = moves[len(moves)-1]
+			}
 		}
 
+		// Checki wach l-player l-akhar baqi connected
 		if players[oppositeColor].ActiveConn == nil {
 			break
 		}
 
-		players[oppositeColor].ActiveConn.WriteMessage(websocket.TextMessage, message)
+		// 5. TASHI7: Men l-a7san tsfet l-move l-m9add (UCI notation masalan) l-player l-akhar
+		// bach hta l-front-end dialo yfham achno t-la3b nishan (yqdar ykoun string dial finalMove)
+		var msgToSend []byte
+		if finalMove != nil {
+			// uci.Encode kat-rj3 dima standard format bhal "g7g8q" aw "e2e4"
+			encoded := chess.UCINotation{}.Encode(game.Position(), finalMove)
+			msgToSend = []byte(encoded)
+		} else {
+			msgToSend = message
+		}
+
+		players[oppositeColor].ActiveConn.WriteMessage(websocket.TextMessage, msgToSend)
+
+		// Daba l-move daz s7i7, n-zdou index bach y-wlli l-nouba dial l-player l-akhar
 		index++
 	}
 
@@ -257,9 +299,7 @@ func (s *Server) PickRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) JoinRoom(w http.ResponseWriter, r *http.Request) {
-	var (
-		clientID = mux.Vars(r)["client_id"]
-	)
+	clientID := mux.Vars(r)["client_id"]
 
 	conn, _ := upgrader.Upgrade(w, r, nil)
 	defer conn.Close()
