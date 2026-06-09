@@ -40,7 +40,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   bool _isApplyingOpponentMove = false;
   int _lastHistoryLength = 0;
 
-  // ── Highlight state ──────────────────────────────────────────
   String? _selectedSquare;
   List<String> _validMoveSquares = [];
 
@@ -181,26 +180,40 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final from = move.fromAlgebraic;
     final to = move.toAlgebraic;
 
-    // ✅ Detect castling via flags
     final isKingSideCastle = (move.flags & Chess.BITS_KSIDE_CASTLE) != 0;
+
     final isQueenSideCastle = (move.flags & Chess.BITS_QSIDE_CASTLE) != 0;
 
     String lan;
 
+    // ================= CASTLING =================
     if (isKingSideCastle) {
       lan = 'O-O';
     } else if (isQueenSideCastle) {
       lan = 'O-O-O';
-    } else {
-      final promotion =
-          move.promotion != null ? move.promotion!.name.toLowerCase()[0] : '';
+    }
 
+    // ================= NORMAL MOVES =================
+    else {
       final isCapture = (move.flags & Chess.BITS_CAPTURE) != 0 ||
           (move.flags & Chess.BITS_EP_CAPTURE) != 0;
 
-      final piece = boardController.game.get(to);
+      // ✅ ONLY promotion if it really exists
+      String promotion = '';
+      if (move.promotion != null) {
+        promotion = move.promotion!.name.toLowerCase()[0];
+      }
+      if (promotion.isNotEmpty) {
+        print(
+            "Promotion detected in sendMove: $from → $to, promote to $promotion");
+      }
+      String promotionmove = promotion.toLowerCase();
+      print("Promotion move variable: $promotionmove");
       String piecePrefix = '';
-      if (piece != null) {
+
+      final piece = boardController.game.get(to);
+
+      if (piece != null && move.promotion == null) {
         switch (piece.type) {
           case PieceType.KNIGHT:
             piecePrefix = 'N';
@@ -222,9 +235,16 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }
       }
 
-      lan = isCapture
-          ? '$piecePrefix${from}x$to$promotion'
-          : '$piecePrefix$from$to$promotion';
+      // ================= FORMAT =================
+      if (promotion.isNotEmpty) {
+        // pawn promotion (NO x handling needed in UCI)
+        print("Promotion move detected: $from → $to, promote to $promotion");
+        lan = '$from$to$promotion';
+      } else if (isCapture) {
+        lan = '$piecePrefix${from}x$to';
+      } else {
+        lan = '$piecePrefix$from$to';
+      }
     }
 
     print("📤 Sending: $lan");
@@ -238,64 +258,67 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     addMessage("You: $lan");
   }
-
   // ======================================================
   // APPLY OPPONENT MOVE
   // ======================================================
 
   void _applyOpponentMove(String lan) {
-  print("♟ Raw received: '$lan'");
-  print("♟ Current turn: ${boardController.game.turn == Chess.WHITE ? 'WHITE' : 'BLACK'}");
-  
-  String from, to;
+    print("♟ Raw received: '$lan'");
+    print(
+        "♟ Current turn: ${boardController.game.turn == Chess.WHITE ? 'WHITE' : 'BLACK'}");
 
-  if (lan == 'O-O') {
-    final isWhite = boardController.game.turn == Chess.WHITE;
-    print("♟ Kingside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
-    from = isWhite ? 'e1' : 'e8';
-    to   = isWhite ? 'g1' : 'g8';
-  } else if (lan == 'O-O-O') {
-    final isWhite = boardController.game.turn == Chess.WHITE;
-    from = isWhite ? 'e1' : 'e8';
-    to   = isWhite ? 'c1' : 'c8';
-  } else {
-    String clean = lan;
-    if (clean.isNotEmpty && RegExp(r'^[NBRQK]').hasMatch(clean)) {
-      clean = clean.substring(1);
+    String from, to;
+    String promotion = 'q';
+
+    if (lan == 'O-O') {
+      final isWhite = boardController.game.turn == Chess.WHITE;
+      print("♟ Kingside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
+      from = isWhite ? 'e1' : 'e8';
+      to = isWhite ? 'g1' : 'g8';
+    } else if (lan == 'O-O-O') {
+      final isWhite = boardController.game.turn == Chess.WHITE;
+      print("♟ Queenside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
+      from = isWhite ? 'e1' : 'e8';
+      to = isWhite ? 'c1' : 'c8';
+    } else {
+      String clean = lan;
+
+      // Strip piece prefix: "Nf3g5" → "f3g5"
+      if (clean.isNotEmpty && RegExp(r'^[NBRQK]').hasMatch(clean)) {
+        clean = clean.substring(1);
+      }
+
+      // Strip capture 'x': "f4xd5" → "f4d5"
+      clean = clean.replaceAll('x', '');
+
+      if (clean.length < 4) return;
+
+      from = clean.substring(0, 2);
+      to = clean.substring(2, 4);
+
+      // Extract promotion if exists (5th character)
+      promotion = clean.length > 4 ? clean.substring(4, 5).toLowerCase() : 'q';
     }
-    clean = clean.replaceAll('x', '');
-    if (clean.length < 4) return;
 
-    from = clean.substring(0, 2);
-    to   = clean.substring(2, 4);
+    _isApplyingOpponentMove = true;
+    final result = boardController.makeMoveWithPromotion(
+      from: from,
+      to: to,
+      pieceToPromoteTo: promotion,
+    );
+    _isApplyingOpponentMove = false;
+
+    _lastHistoryLength = boardController.game.history.length;
+
+    setState(() {
+      myTurn = true;
+      _selectedSquare = null;
+      _validMoveSquares = [];
+    });
   }
 
-  final promotion = (lan.length > 4 && !lan.startsWith('O'))
-      ? lan.substring(lan.length - 1)
-      : 'q';
-
-  print("♟ Making move: $from → $to");
-
-  _isApplyingOpponentMove = true;
-  final result = boardController.makeMoveWithPromotion(
-    from: from,
-    to: to,
-    pieceToPromoteTo: promotion,
-  );
-
-  _isApplyingOpponentMove = false;
-
-  _lastHistoryLength = boardController.game.history.length;
-
-  setState(() {
-    myTurn = true;
-    _selectedSquare = null;
-    _validMoveSquares = [];
-  });
-}
-
   // ======================================================
-  // HIGHLIGHT — tap a square to select / show valid moves
+  // HIGHLIGHT
   // ======================================================
 
   void _onSquareTapped(String square) {
@@ -303,18 +326,26 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     final game = boardController.game;
 
-    // If a square is already selected and the tapped square is a valid target
     if (_selectedSquare != null && _validMoveSquares.contains(square)) {
-      boardController.makeMove(from: _selectedSquare!, to: square);
-      setState(() {
-        _selectedSquare = null;
-        _validMoveSquares = [];
-      });
-      sendMove();
+      // Check if this is a promotion move
+      final piece = game.get(_selectedSquare!);
+      final isPromotion = piece != null &&
+          piece.type == PieceType.PAWN &&
+          (square[1] == '8' || square[1] == '1');
+
+      if (isPromotion) {
+        _showPromotionDialog(_selectedSquare!, square);
+      } else {
+        boardController.makeMove(from: _selectedSquare!, to: square);
+        setState(() {
+          _selectedSquare = null;
+          _validMoveSquares = [];
+        });
+        sendMove();
+      }
       return;
     }
 
-    // Check if there's a friendly piece on this square
     final piece = game.get(square);
     if (piece == null) {
       setState(() {
@@ -335,7 +366,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
 
-    // Compute legal target squares
     final moves =
         game.moves({'square': square, 'verbose': true}) as List<dynamic>;
     final targets = moves.map((m) => (m as Map)['to'] as String).toList();
@@ -344,6 +374,55 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _selectedSquare = square;
       _validMoveSquares = targets;
     });
+  }
+
+  // ======================================================
+  // PROMOTION DIALOG  ← FIXED
+  // ======================================================
+
+  Future<void> _showPromotionDialog(String from, String to) async {
+    final promoted = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text("Promote pawn"),
+        content: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            // ✅ Use lowercase letters to match flutter_chess_board PieceType
+            _promotionButton('q', '♛'),
+            _promotionButton('r', '♜'),
+            _promotionButton('b', '♝'),
+            _promotionButton('n', '♞'),
+          ],
+        ),
+      ),
+    );
+
+    if (promoted == null) return;
+
+    print("Promoting to: $promoted");
+    String promotionmove = promoted.toLowerCase();
+    // ✅ Pass the chosen piece — was missing in the original
+    boardController.makeMoveWithPromotion(
+      from: from,
+      to: to,
+      pieceToPromoteTo: promotionmove,
+    );
+
+    setState(() {
+      _selectedSquare = null;
+      _validMoveSquares = [];
+    });
+
+    sendMove();
+  }
+
+  Widget _promotionButton(String piece, String symbol) {
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pop(piece),
+      child: Text(symbol, style: const TextStyle(fontSize: 40)),
+    );
   }
 
   // ======================================================
@@ -420,8 +499,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
           const SizedBox(height: 8),
-
-          // ── Lobby / waiting ──
           if (status == "idle" || status == "waiting") ...[
             Padding(
               padding: const EdgeInsets.all(10),
@@ -444,8 +521,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ],
-
-          // ── Playing ──
           if (status == "playing") ...[
             Text(
               myTurn ? "♟ Your turn" : "⏳ Opponent's turn",
@@ -468,7 +543,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
                           : PlayerColor.white,
                       onMove: () => sendMove(),
                     ),
-                    // Highlight overlay (pointer events pass through when idle)
                     if (myTurn)
                       Positioned.fill(
                         child: _buildMoveOverlay(boardSize),
@@ -478,7 +552,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               },
             ),
           ],
-
           const Divider(),
           Expanded(
             child: ListView.builder(
@@ -500,7 +573,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
 }
 
 // ======================================================
-// CUSTOM PAINTER — selected square + valid-move dots
+// CUSTOM PAINTER
 // ======================================================
 
 class _MoveHighlightPainter extends CustomPainter {
@@ -514,7 +587,6 @@ class _MoveHighlightPainter extends CustomPainter {
     required this.isBlack,
   });
 
-  /// Converts e.g. "e4" → top-left Offset of that square on the canvas.
   Offset _squareToOffset(String sq, double squareSize) {
     final files = isBlack
         ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
@@ -532,7 +604,6 @@ class _MoveHighlightPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final squareSize = size.width / 8;
 
-    // 1. Yellow tint on the selected square
     if (selectedSquare != null) {
       final offset = _squareToOffset(selectedSquare!, squareSize);
       canvas.drawRect(
@@ -541,7 +612,6 @@ class _MoveHighlightPainter extends CustomPainter {
       );
     }
 
-    // 2. Green dots on every valid target square
     final dotPaint = Paint()..color = Colors.green.withOpacity(0.55);
     for (final sq in validSquares) {
       final offset = _squareToOffset(sq, squareSize);
