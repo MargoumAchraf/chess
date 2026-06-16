@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/painting.dart' as painting;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:flutter_chess_board/flutter_chess_board.dart';
+import 'package:flutter_chess_board/flutter_chess_board.dart' hide Color;
 
 void main() {
   runApp(const MyApp());
@@ -42,6 +43,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   String? _selectedSquare;
   List<String> _validMoveSquares = [];
+
+  // ── Game-over overlay state ──────────────────────────────────────────────
+  bool _showGameOverOverlay = false;
+  String _gameOverResult = "";    // "1-0" | "0-1" | "1/2-1/2"
+  String _gameOverMethod = "";    // "Checkmate" | "Stalemate" | ...
+  // ────────────────────────────────────────────────────────────────────────
 
   List<String> messages = [];
   final TextEditingController nameController = TextEditingController();
@@ -133,20 +140,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
     // 4. Game over result
     if (plain == "1-0" || plain == "0-1" || plain == "1/2-1/2") {
       addMessage("🏁 Game Over: $plain");
-      boardController.resetBoard();
-      setState(() {
-        status = "idle";
-        myTurn = false;
-        color = "";
-        userId = "";
-        _lastHistoryLength = 0;
-        _selectedSquare = null;
-        _validMoveSquares = [];
-      });
+      _triggerGameOver(plain);
       return;
     }
 
-    // 5. Game method
+    // 5. Game method — store it for the overlay
     if (plain == "Checkmate" ||
         plain == "Stalemate" ||
         plain == "DrawOffer" ||
@@ -156,11 +154,58 @@ class _LobbyScreenState extends State<LobbyScreen> {
         plain == "SeventyFiveMoveRule" ||
         plain == "InsufficientMaterial") {
       addMessage("📋 Method: $plain");
+      setState(() => _gameOverMethod = plain);
       return;
     }
 
     // 6. Fallback
     addMessage("⚠️ Server: $plain");
+  }
+
+  // ======================================================
+  // GAME OVER  ← NEW
+  // ======================================================
+
+  void _triggerGameOver(String result) {
+    boardController.resetBoard();
+    setState(() {
+      _gameOverResult = result;
+      _showGameOverOverlay = true;
+      myTurn = false;
+    });
+  }
+
+  void _dismissGameOver() {
+    setState(() {
+      _showGameOverOverlay = false;
+      _gameOverResult = "";
+      _gameOverMethod = "";
+      status = "idle";
+      color = "";
+      userId = "";
+      _lastHistoryLength = 0;
+      _selectedSquare = null;
+      _validMoveSquares = [];
+    });
+  }
+
+  /// Returns (emoji, headline, subline, overlayColor)
+  (String, String, String, painting.Color) _gameOverInfo() {
+    final isWhite = color == "white";
+    final method = _gameOverMethod.isNotEmpty ? _gameOverMethod : "";
+
+    if (_gameOverResult == "1/2-1/2") {
+      return ("🤝", "Draw!", method.isNotEmpty ? method : "Game drawn", Colors.amber.shade700);
+    }
+
+    final iWon = (_gameOverResult == "1-0" && isWhite) ||
+        (_gameOverResult == "0-1" && !isWhite);
+
+    if (iWon) {
+      return ("🏆", "You Won!", method.isNotEmpty ? method : "Congratulations", Colors.green.shade700);
+    } else {
+      return ("😔", "You Lost", method.isNotEmpty ? method : "Better luck next time", Colors.red.shade700);
+    }
   }
 
   // ======================================================
@@ -181,38 +226,25 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final to = move.toAlgebraic;
 
     final isKingSideCastle = (move.flags & Chess.BITS_KSIDE_CASTLE) != 0;
-
     final isQueenSideCastle = (move.flags & Chess.BITS_QSIDE_CASTLE) != 0;
 
     String lan;
 
-    // ================= CASTLING =================
     if (isKingSideCastle) {
       lan = 'O-O';
     } else if (isQueenSideCastle) {
       lan = 'O-O-O';
-    }
-
-    // ================= NORMAL MOVES =================
-    else {
+    } else {
       final isCapture = (move.flags & Chess.BITS_CAPTURE) != 0 ||
           (move.flags & Chess.BITS_EP_CAPTURE) != 0;
 
-      // ✅ ONLY promotion if it really exists
       String promotion = '';
       if (move.promotion != null) {
         promotion = move.promotion!.name.toLowerCase()[0];
       }
-      if (promotion.isNotEmpty) {
-        print(
-            "Promotion detected in sendMove: $from → $to, promote to $promotion");
-      }
-      String promotionmove = promotion.toLowerCase();
-      print("Promotion move variable: $promotionmove");
+
       String piecePrefix = '';
-
       final piece = boardController.game.get(to);
-
       if (piece != null && move.promotion == null) {
         switch (piece.type) {
           case PieceType.KNIGHT:
@@ -235,10 +267,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
         }
       }
 
-      // ================= FORMAT =================
       if (promotion.isNotEmpty) {
-        // pawn promotion (NO x handling needed in UCI)
-        print("Promotion move detected: $from → $to, promote to $promotion");
         lan = '$from$to$promotion';
       } else if (isCapture) {
         lan = '$piecePrefix${from}x$to';
@@ -258,50 +287,37 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     addMessage("You: $lan");
   }
+
   // ======================================================
   // APPLY OPPONENT MOVE
   // ======================================================
 
   void _applyOpponentMove(String lan) {
-    print("♟ Raw received: '$lan'");
-    print(
-        "♟ Current turn: ${boardController.game.turn == Chess.WHITE ? 'WHITE' : 'BLACK'}");
-
     String from, to;
     String promotion = 'q';
 
     if (lan == 'O-O') {
-      final isWhite = boardController.game.turn == Chess.WHITE;
-      print("♟ Kingside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
+      final isWhite = boardController.game.turn.name == 'WHITE';
       from = isWhite ? 'e1' : 'e8';
       to = isWhite ? 'g1' : 'g8';
     } else if (lan == 'O-O-O') {
-      final isWhite = boardController.game.turn == Chess.WHITE;
-      print("♟ Queenside castle for: ${isWhite ? 'WHITE' : 'BLACK'}");
+      final isWhite = boardController.game.turn.name == 'WHITE';
       from = isWhite ? 'e1' : 'e8';
       to = isWhite ? 'c1' : 'c8';
     } else {
       String clean = lan;
-
-      // Strip piece prefix: "Nf3g5" → "f3g5"
       if (clean.isNotEmpty && RegExp(r'^[NBRQK]').hasMatch(clean)) {
         clean = clean.substring(1);
       }
-
-      // Strip capture 'x': "f4xd5" → "f4d5"
       clean = clean.replaceAll('x', '');
-
       if (clean.length < 4) return;
-
       from = clean.substring(0, 2);
       to = clean.substring(2, 4);
-
-      // Extract promotion if exists (5th character)
       promotion = clean.length > 4 ? clean.substring(4, 5).toLowerCase() : 'q';
     }
 
     _isApplyingOpponentMove = true;
-    final result = boardController.makeMoveWithPromotion(
+    boardController.makeMoveWithPromotion(
       from: from,
       to: to,
       pieceToPromoteTo: promotion,
@@ -327,7 +343,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final game = boardController.game;
 
     if (_selectedSquare != null && _validMoveSquares.contains(square)) {
-      // Check if this is a promotion move
       final piece = game.get(_selectedSquare!);
       final isPromotion = piece != null &&
           piece.type == PieceType.PAWN &&
@@ -355,8 +370,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
 
-    final isMyPiece = (color == 'white' && piece.color == Color.WHITE) ||
-        (color == 'black' && piece.color == Color.BLACK);
+    final isMyPiece =
+        (color == 'white' && piece.color.name == 'WHITE') ||
+        (color == 'black' && piece.color.name == 'BLACK');
 
     if (!isMyPiece) {
       setState(() {
@@ -377,7 +393,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   // ======================================================
-  // PROMOTION DIALOG  ← FIXED
+  // PROMOTION DIALOG
   // ======================================================
 
   Future<void> _showPromotionDialog(String from, String to) async {
@@ -389,7 +405,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
         content: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
-            // ✅ Use lowercase letters to match flutter_chess_board PieceType
             _promotionButton('q', '♛'),
             _promotionButton('r', '♜'),
             _promotionButton('b', '♝'),
@@ -401,13 +416,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
     if (promoted == null) return;
 
-    print("Promoting to: $promoted");
-    String promotionmove = promoted.toLowerCase();
-    // ✅ Pass the chosen piece — was missing in the original
     boardController.makeMoveWithPromotion(
       from: from,
       to: to,
-      pieceToPromoteTo: promotionmove,
+      pieceToPromoteTo: promoted.toLowerCase(),
     );
 
     setState(() {
@@ -441,8 +453,9 @@ class _LobbyScreenState extends State<LobbyScreen> {
         final ranks = color == 'black'
             ? ['1', '2', '3', '4', '5', '6', '7', '8']
             : ['8', '7', '6', '5', '4', '3', '2', '1'];
-        final filesOrdered =
-            color == 'black' ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : files;
+        final filesOrdered = color == 'black'
+            ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
+            : files;
 
         _onSquareTapped('${filesOrdered[col]}${ranks[row]}');
       },
@@ -452,6 +465,90 @@ class _LobbyScreenState extends State<LobbyScreen> {
           selectedSquare: _selectedSquare,
           validSquares: _validMoveSquares,
           isBlack: color == 'black',
+        ),
+      ),
+    );
+  }
+
+  // ======================================================
+  // GAME OVER OVERLAY  ← NEW
+  // ======================================================
+
+  Widget _buildGameOverOverlay(double boardSize) {
+    final (emoji, headline, subline, accentColor) = _gameOverInfo();
+
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withOpacity(0.72),
+        child: Center(
+          child: Container(
+            width: boardSize * 0.78,
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.35),
+                  blurRadius: 32,
+                  spreadRadius: 4,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 56)),
+                const SizedBox(height: 12),
+                Text(
+                  headline,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: accentColor,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  subline,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: Colors.grey.shade600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _gameOverResult,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade400,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _dismissGameOver,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      "Play Again",
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -537,16 +634,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   children: [
                     ChessBoard(
                       controller: boardController,
-                      enableUserMoves: myTurn,
+                      enableUserMoves: myTurn && !_showGameOverOverlay,
                       boardOrientation: color == "black"
                           ? PlayerColor.black
                           : PlayerColor.white,
                       onMove: () => sendMove(),
                     ),
-                    if (myTurn)
+                    if (myTurn && !_showGameOverOverlay)
                       Positioned.fill(
                         child: _buildMoveOverlay(boardSize),
                       ),
+                    // ── Game-over overlay sits on top of everything ──
+                    if (_showGameOverOverlay)
+                      _buildGameOverOverlay(boardSize),
                   ],
                 );
               },
