@@ -46,8 +46,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   // ── Game-over overlay state ──────────────────────────────────────────────
   bool _showGameOverOverlay = false;
-  String _gameOverResult = "";    // "1-0" | "0-1" | "1/2-1/2"
-  String _gameOverMethod = "";    // "Checkmate" | "Stalemate" | ...
+  String _gameOverResult = ""; // "1-0" | "0-1" | "1/2-1/2"
+  String _gameOverMethod = ""; // "Checkmate" | "Stalemate" | ...
   // ────────────────────────────────────────────────────────────────────────
 
   List<String> messages = [];
@@ -195,16 +195,31 @@ class _LobbyScreenState extends State<LobbyScreen> {
     final method = _gameOverMethod.isNotEmpty ? _gameOverMethod : "";
 
     if (_gameOverResult == "1/2-1/2") {
-      return ("🤝", "Draw!", method.isNotEmpty ? method : "Game drawn", Colors.amber.shade700);
+      return (
+        "🤝",
+        "Draw!",
+        method.isNotEmpty ? method : "Game drawn",
+        Colors.amber.shade700
+      );
     }
 
     final iWon = (_gameOverResult == "1-0" && isWhite) ||
         (_gameOverResult == "0-1" && !isWhite);
 
     if (iWon) {
-      return ("🏆", "You Won!", method.isNotEmpty ? method : "Congratulations", Colors.green.shade700);
+      return (
+        "🏆",
+        "You Won!",
+        method.isNotEmpty ? method : "Congratulations",
+        Colors.green.shade700
+      );
     } else {
-      return ("😔", "You Lost", method.isNotEmpty ? method : "Better luck next time", Colors.red.shade700);
+      return (
+        "😔",
+        "You Lost",
+        method.isNotEmpty ? method : "Better luck next time",
+        Colors.red.shade700
+      );
     }
   }
 
@@ -274,8 +289,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
       } else {
         lan = '$piecePrefix$from$to';
       }
+      if (promotion.isEmpty && boardController.game.in_checkmate) {
+        lan = '$lan#';
+      }
     }
-
     print("📤 Sending: $lan");
     gameChannel?.sink.add(lan);
 
@@ -293,6 +310,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
   // ======================================================
 
   void _applyOpponentMove(String lan) {
+    
     String from, to;
     String promotion = 'q';
 
@@ -370,8 +388,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
 
-    final isMyPiece =
-        (color == 'white' && piece.color.name == 'WHITE') ||
+    final isMyPiece = (color == 'white' && piece.color.name == 'WHITE') ||
         (color == 'black' && piece.color.name == 'BLACK');
 
     if (!isMyPiece) {
@@ -453,9 +470,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
         final ranks = color == 'black'
             ? ['1', '2', '3', '4', '5', '6', '7', '8']
             : ['8', '7', '6', '5', '4', '3', '2', '1'];
-        final filesOrdered = color == 'black'
-            ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
-            : files;
+        final filesOrdered =
+            color == 'black' ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : files;
 
         _onSquareTapped('${filesOrdered[col]}${ranks[row]}');
       },
@@ -542,7 +558,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                     ),
                     child: const Text(
                       "Play Again",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ),
@@ -645,8 +662,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                         child: _buildMoveOverlay(boardSize),
                       ),
                     // ── Game-over overlay sits on top of everything ──
-                    if (_showGameOverOverlay)
-                      _buildGameOverOverlay(boardSize),
+                    if (_showGameOverOverlay) _buildGameOverOverlay(boardSize),
                   ],
                 );
               },
