@@ -112,6 +112,12 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
+    if (plain.startsWith("opponent: ")) {
+      String opponentName = plain.split(":")[2].trim();
+      addMessage("name  is "+opponentName); // achraf
+      return;
+    }
+
     // 6. Fallback
     addMessage("⚠️ Server: $plain");
   }
@@ -410,7 +416,8 @@ class _GameScreenState extends State<GameScreen> {
           shape: BoxShape.circle,
           border: Border.all(color: accent, width: 1.5),
         ),
-        child: Text(symbol, style: const TextStyle(fontSize: 34, color: primaryDark)),
+        child: Text(symbol,
+            style: const TextStyle(fontSize: 34, color: primaryDark)),
       ),
     );
   }
@@ -464,7 +471,8 @@ class _GameScreenState extends State<GameScreen> {
             decoration: BoxDecoration(
               color: bgTop,
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: accentColor.withOpacity(0.25), width: 1.5),
+              border:
+                  Border.all(color: accentColor.withOpacity(0.25), width: 1.5),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.35),
@@ -498,7 +506,8 @@ class _GameScreenState extends State<GameScreen> {
                 ),
                 const SizedBox(height: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     color: accentColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
@@ -595,7 +604,8 @@ class _GameScreenState extends State<GameScreen> {
                   width: double.infinity,
                   decoration: const BoxDecoration(
                     color: bgTop,
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                    borderRadius:
+                        BorderRadius.vertical(top: Radius.circular(28)),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black26,
@@ -681,7 +691,9 @@ class _GameScreenState extends State<GameScreen> {
           ),
           const SizedBox(width: 10),
           Text(
-            color.isNotEmpty ? "Playing as ${color[0].toUpperCase()}${color.substring(1)}" : "Connecting…",
+            color.isNotEmpty
+                ? "Playing as ${color[0].toUpperCase()}${color.substring(1)}"
+                : "Connecting…",
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w600,

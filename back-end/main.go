@@ -187,7 +187,7 @@ func (c *ChessHub) StartGame(userID string) error {
 	}
 
 	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(client.Color))
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent:"+opponent.Name))
+	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent: "+opponent.Name))
 	for game.Outcome() == chess.NoOutcome {
 		var (
 			color         = movesOrder[index%2]

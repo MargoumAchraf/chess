@@ -37,10 +37,12 @@ class _LobbyScreenState extends State<LobbyScreen> {
       return;
     }
 
-    username = name;
-
+    setState(() => username = name);
+    print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"+username);
     lobbyChannel = IOWebSocketChannel.connect(
-      Uri.parse("wss://crusader-arming-riverboat.ngrok-free.dev/rooms"),
+      Uri.parse(
+        "wss://crusader-arming-riverboat.ngrok-free.dev/rooms?name=$username",
+      ),
     );
 
     setState(() => status = "waiting");
@@ -140,7 +142,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   width: double.infinity,
                   decoration: const BoxDecoration(
                     color: bgTop,
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                    borderRadius:
+                        BorderRadius.vertical(top: Radius.circular(28)),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black26,
@@ -152,6 +155,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Column(
                     children: [
                       const SizedBox(height: 24),
+                      if (username.isNotEmpty) _buildWelcomeText(),
                       _buildNameField(isWaiting),
                       const SizedBox(height: 16),
                       _buildJoinButton(isWaiting),
@@ -193,7 +197,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
             const Icon(Icons.circle, size: 10, color: Colors.greenAccent),
           const SizedBox(width: 10),
           Text(
-            isWaiting ? "Waiting for opponent…" : "Idle",
+            isWaiting
+                ? (username.isNotEmpty
+                    ? "Waiting for opponent, $username…"
+                    : "Waiting for opponent…")
+                : "Idle",
             style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w600,
@@ -201,6 +209,29 @@ class _LobbyScreenState extends State<LobbyScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeText() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Row(
+          children: [
+            const Icon(Icons.person, size: 18, color: primary),
+            const SizedBox(width: 6),
+            Text(
+              "Playing as $username",
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: primaryDark,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
