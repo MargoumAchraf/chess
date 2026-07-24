@@ -4,7 +4,6 @@ import 'package:mobile/screen/LobbyScreen.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_chess_board/flutter_chess_board.dart' hide Color;
 
-             
 class GameScreen extends StatefulWidget {
   final WebSocketChannel gameChannel;
   final String userId;
@@ -40,6 +39,16 @@ class _GameScreenState extends State<GameScreen> {
   // ────────────────────────────────────────────────────────────────────────
 
   final List<String> messages = [];
+
+  // ── Theme (matches LobbyScreen) ──────────────────────────────────────────
+  static const Color primaryDark = Color(0xFF3E2723);
+  static const Color primary = Color(0xFF6D4C41);
+  static const Color accent = Color(0xFFD7A86E);
+  static const Color bgTop = Color(0xFFFFF8F0);
+  static const Color winGreen = Color(0xFF2E7D32);
+  static const Color loseRed = Color(0xFFC62828);
+  static const Color drawAmber = Color(0xFFB8860B);
+  // ────────────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -138,7 +147,7 @@ class _GameScreenState extends State<GameScreen> {
         "🤝",
         "Draw!",
         method.isNotEmpty ? method : "Game drawn",
-        Colors.amber.shade700
+        drawAmber
       );
     }
 
@@ -150,14 +159,14 @@ class _GameScreenState extends State<GameScreen> {
         "🏆",
         "You Won!",
         method.isNotEmpty ? method : "Congratulations",
-        Colors.green.shade700
+        winGreen
       );
     } else {
       return (
         "😔",
         "You Lost",
         method.isNotEmpty ? method : "Better luck next time",
-        Colors.red.shade700
+        loseRed
       );
     }
   }
@@ -356,7 +365,13 @@ class _GameScreenState extends State<GameScreen> {
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
-        title: const Text("Promote pawn"),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          "Promote pawn",
+          style: TextStyle(fontWeight: FontWeight.w600, color: primaryDark),
+        ),
         content: Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
@@ -388,7 +403,15 @@ class _GameScreenState extends State<GameScreen> {
   Widget _promotionButton(String piece, String symbol) {
     return GestureDetector(
       onTap: () => Navigator.of(context).pop(piece),
-      child: Text(symbol, style: const TextStyle(fontSize: 40)),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: bgTop,
+          shape: BoxShape.circle,
+          border: Border.all(color: accent, width: 1.5),
+        ),
+        child: Text(symbol, style: const TextStyle(fontSize: 34, color: primaryDark)),
+      ),
     );
   }
 
@@ -436,11 +459,12 @@ class _GameScreenState extends State<GameScreen> {
         color: Colors.black.withOpacity(0.72),
         child: Center(
           child: Container(
-            width: boardSize * 0.78,
+            width: boardSize * 0.82,
             padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
+              color: bgTop,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: accentColor.withOpacity(0.25), width: 1.5),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withOpacity(0.35),
@@ -460,6 +484,7 @@ class _GameScreenState extends State<GameScreen> {
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
                     color: accentColor,
+                    letterSpacing: 0.3,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -467,18 +492,25 @@ class _GameScreenState extends State<GameScreen> {
                   subline,
                   style: TextStyle(
                     fontSize: 15,
-                    color: Colors.grey.shade600,
+                    color: primaryDark.withOpacity(0.65),
                   ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
-                Text(
-                  _gameOverResult,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade400,
-                    letterSpacing: 1.2,
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: accentColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _gameOverResult,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: accentColor,
+                      letterSpacing: 1.2,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 28),
@@ -487,12 +519,13 @@ class _GameScreenState extends State<GameScreen> {
                   child: ElevatedButton(
                     onPressed: _dismissGameOver,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: accentColor,
+                      backgroundColor: primary,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
+                      elevation: 2,
                     ),
                     child: const Text(
                       "Play Again",
@@ -530,70 +563,182 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text("Chess Multiplayer"),
-        backgroundColor: Colors.brown,
+        title: const Text(
+          "Chess Multiplayer",
+          style: TextStyle(fontWeight: FontWeight.w600, letterSpacing: 0.5),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.white,
       ),
-      body: Column(
-        children: [
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.brown.shade100,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              "Status: $status${color.isNotEmpty ? ' | Playing as $color' : ''}",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [primaryDark, primary],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: [0.0, 0.3],
           ),
-          const SizedBox(height: 8),
-          Text(
-            myTurn ? "♟ Your turn" : "⏳ Opponent's turn",
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: myTurn ? Colors.green : Colors.orange,
-            ),
-          ),
-          const SizedBox(height: 4),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final boardSize = constraints.maxWidth;
-              return Stack(
-                children: [
-                  ChessBoard(
-                    controller: boardController,
-                    enableUserMoves: myTurn && !_showGameOverOverlay,
-                    boardOrientation:
-                        color == "black" ? PlayerColor.black : PlayerColor.white,
-                    onMove: () => sendMove(),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 70),
+              _buildStatusChip(),
+              const SizedBox(height: 10),
+              _buildTurnChip(),
+              const SizedBox(height: 16),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  decoration: const BoxDecoration(
+                    color: bgTop,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 12,
+                        offset: Offset(0, -4),
+                      ),
+                    ],
                   ),
-                  if (myTurn && !_showGameOverOverlay)
-                    Positioned.fill(
-                      child: _buildMoveOverlay(boardSize),
-                    ),
-                  // ── Game-over overlay sits on top of everything ──
-                  if (_showGameOverOverlay) _buildGameOverOverlay(boardSize),
-                ],
-              );
-            },
-          ),
-          const Divider(),
-          Expanded(
-            child: ListView.builder(
-              reverse: true,
-              itemCount: messages.length,
-              itemBuilder: (_, i) => Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: Text(
-                  messages[i],
-                  style: const TextStyle(fontSize: 12),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 20),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final boardSize = constraints.maxWidth;
+                            return Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: primaryDark.withOpacity(0.15),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 6),
+                                  ),
+                                ],
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(16),
+                                child: Stack(
+                                  children: [
+                                    ChessBoard(
+                                      controller: boardController,
+                                      enableUserMoves:
+                                          myTurn && !_showGameOverOverlay,
+                                      boardOrientation: color == "black"
+                                          ? PlayerColor.black
+                                          : PlayerColor.white,
+                                      onMove: () => sendMove(),
+                                    ),
+                                    if (myTurn && !_showGameOverOverlay)
+                                      Positioned.fill(
+                                        child: _buildMoveOverlay(boardSize),
+                                      ),
+                                    if (_showGameOverOverlay)
+                                      _buildGameOverOverlay(boardSize),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Divider(height: 1, thickness: 1),
+                      Expanded(child: _buildMessageList()),
+                    ],
+                  ),
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusChip() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: Colors.white.withOpacity(0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            color == 'white' ? Icons.circle : Icons.circle_outlined,
+            size: 12,
+            color: color == 'white' ? Colors.white : Colors.white70,
+          ),
+          const SizedBox(width: 10),
+          Text(
+            color.isNotEmpty ? "Playing as ${color[0].toUpperCase()}${color.substring(1)}" : "Connecting…",
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTurnChip() {
+    final label = myTurn ? "♟ Your turn" : "⏳ Opponent's turn";
+    final chipColor = myTurn ? winGreen : accent;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: chipColor.withOpacity(0.85),
+        borderRadius: BorderRadius.circular(30),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMessageList() {
+    if (messages.isEmpty) {
+      return const Center(
+        child: Text(
+          "No activity yet",
+          style: TextStyle(color: Colors.grey),
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      reverse: true,
+      itemCount: messages.length,
+      itemBuilder: (_, i) => Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.brown.shade100),
+        ),
+        child: Text(
+          messages[i],
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+        ),
       ),
     );
   }
@@ -635,11 +780,11 @@ class _MoveHighlightPainter extends CustomPainter {
       final offset = _squareToOffset(selectedSquare!, squareSize);
       canvas.drawRect(
         Rect.fromLTWH(offset.dx, offset.dy, squareSize, squareSize),
-        Paint()..color = Colors.yellow.withOpacity(0.45),
+        Paint()..color = const Color(0xFFD7A86E).withOpacity(0.55),
       );
     }
 
-    final dotPaint = Paint()..color = Colors.green.withOpacity(0.55);
+    final dotPaint = Paint()..color = const Color(0xFF2E7D32).withOpacity(0.55);
     for (final sq in validSquares) {
       final offset = _squareToOffset(sq, squareSize);
       final center = Offset(
