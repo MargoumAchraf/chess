@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -28,6 +29,7 @@ type ChessHub struct {
 	CountUserJoined     map[string]*atomic.Int32 // key is RoomID
 	Rooms               map[string]*ChessRoom    // key is RoomID
 	Clients             map[string]*ChessClient  // key is UserID
+	PendingNames        map[string]string        // key is UserID, holds name until room assignment
 }
 
 func NewChessHub() *ChessHub {
@@ -39,6 +41,7 @@ func NewChessHub() *ChessHub {
 		CountUserJoined:     make(map[string]*atomic.Int32),
 		Rooms:               make(map[string]*ChessRoom),
 		Clients:             make(map[string]*ChessClient),
+		PendingNames:        make(map[string]string),
 	}
 }
 
@@ -106,8 +109,9 @@ func (c *ChessHub) NewRoom(roomID string) {
 	c.ChanRoomsUserJoined <- c.Rooms[roomID]
 }
 
-func (c *ChessHub) NewUser(userID string) {
+func (c *ChessHub) NewUser(userID, name string) {
 	c.ChanWaitingRoom[userID] = make(chan bool)
+	c.PendingNames[userID] = name // new map: userID -> name
 	c.ChanNewUser <- userID
 }
 
@@ -135,7 +139,9 @@ func (c *ChessHub) NotifyUserForPickedRoom(roomID, userID string, color bool) {
 	c.Clients[userID] = &ChessClient{
 		ID:     userID,
 		RoomID: roomID,
+		Name:   c.PendingNames[userID],
 	}
+	delete(c.PendingNames, userID)
 	c.Rooms[roomID].Clients[userID] = c.Clients[userID]
 
 	switch color {
@@ -169,14 +175,19 @@ func (c *ChessHub) StartGame(userID string) error {
 		game       = c.Rooms[roomID].Game
 		index      = 0
 	)
-
+	println("Starting game for user:", userID, "in room:", roomID, "with color:", client.Color)
 	players, err := c.GetPlayers(roomID)
 	if err != nil {
 		return err
 	}
 
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(client.Color))
+	opponent := players[ColorWhite]
+	if client.Color == ColorWhite {
+		opponent = players[ColorBlack]
+	}
 
+	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(client.Color))
+	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent:"+opponent.Name))
 	for game.Outcome() == chess.NoOutcome {
 		var (
 			color         = movesOrder[index%2]
@@ -201,7 +212,7 @@ func (c *ChessHub) StartGame(userID string) error {
 				players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte("UCI Move machi valid: "+err.Error()))
 				continue
 			}
-			
+
 			finalMove = move
 			game.Move(finalMove)
 
@@ -222,6 +233,7 @@ func (c *ChessHub) StartGame(userID string) error {
 
 		// Checki wach l-player l-akhar baqi connected
 		if players[oppositeColor].ActiveConn == nil {
+			println("Player", players[oppositeColor].Name, "disconnected. Ending game.")
 			break
 		}
 
@@ -264,6 +276,7 @@ type ChessRoom struct {
 
 type ChessClient struct {
 	ID                  string
+	Name                string
 	Color               string
 	RoomID              string
 	ActiveConn          *websocket.Conn
@@ -287,15 +300,23 @@ func NewServer(chessHub *ChessHub) *Server {
 }
 
 func (s *Server) PickRoom(w http.ResponseWriter, r *http.Request) {
+	fmt.Println("New user connected:")
 	conn, _ := upgrader.Upgrade(w, r, nil)
 	defer conn.Close()
 
 	userID := uuid.NewString()
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "Guest-" + userID[:6]
+	}
 
-	s.ChessHub.NewUser(userID)
+	fmt.Println("New user connected:", userID, "with name:", name)
+
+
+	s.ChessHub.NewUser(userID, name)
 	s.ChessHub.WaitForRoom(userID)
 
-	conn.WriteMessage(websocket.TextMessage, []byte(userID))
+	conn.WriteMessage(websocket.TextMessage,  []byte(userID))
 }
 
 func (s *Server) JoinRoom(w http.ResponseWriter, r *http.Request) {
@@ -344,8 +365,3 @@ func getenv(key, fallback string) string {
 	}
 	return value
 }
-
-
-
-
-
