@@ -188,6 +188,11 @@ func (c *ChessHub) StartGame(userID string) error {
 
 	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(client.Color))
 	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent: "+opponent.Name))
+
+	// tracks whether the game ended because of a disconnect rather than a
+	// natural chess outcome (checkmate/stalemate/draw/etc.)
+	disconnected := false
+
 	for game.Outcome() == chess.NoOutcome {
 		var (
 			color         = movesOrder[index%2]
@@ -196,6 +201,19 @@ func (c *ChessHub) StartGame(userID string) error {
 
 		mt, message, err := players[color].ActiveConn.ReadMessage()
 		if err != nil || mt == websocket.CloseMessage {
+			// the player whose turn it was disconnected (or the read failed);
+			// notify the other player that they won by disconnect, if they're
+			// still connected.
+			disconnected = true
+			winner := players[oppositeColor]
+			color_player  := client.Color;
+			if winner.ActiveConn != nil {
+				if color_player == ColorWhite {
+					winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("1-0"))
+				} else {
+					winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("0-1"))
+				}
+			}
 			break
 		}
 
@@ -234,6 +252,14 @@ func (c *ChessHub) StartGame(userID string) error {
 		// Checki wach l-player l-akhar baqi connected
 		if players[oppositeColor].ActiveConn == nil {
 			println("Player", players[oppositeColor].Name, "disconnected. Ending game.")
+			disconnected = true
+			// the mover just made a valid move and the opponent is gone —
+			// the mover wins by opponent disconnect.
+			winner := players[color]
+			if winner.ActiveConn != nil {
+				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent_disconnected"))
+				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("win"))
+			}
 			break
 		}
 
@@ -254,8 +280,12 @@ func (c *ChessHub) StartGame(userID string) error {
 		index++
 	}
 
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Outcome()))
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Method().String()))
+	// Only report the natural chess outcome if the game didn't end because
+	// of a disconnect (disconnect messages were already sent above).
+	if !disconnected {
+		client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Outcome()))
+		client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Method().String()))
+	}
 
 	return nil
 }
@@ -312,11 +342,10 @@ func (s *Server) PickRoom(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("New user connected:", userID, "with name:", name)
 
-
 	s.ChessHub.NewUser(userID, name)
 	s.ChessHub.WaitForRoom(userID)
 
-	conn.WriteMessage(websocket.TextMessage,  []byte(userID))
+	conn.WriteMessage(websocket.TextMessage, []byte(userID))
 }
 
 func (s *Server) JoinRoom(w http.ResponseWriter, r *http.Request) {

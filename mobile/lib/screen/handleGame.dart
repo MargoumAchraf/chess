@@ -34,8 +34,12 @@ class _GameScreenState extends State<GameScreen> {
 
   // ── Game-over overlay state ──────────────────────────────────────────────
   bool _showGameOverOverlay = false;
-  String _gameOverResult = ""; // "1-0" | "0-1" | "1/2-1/2"
-  String _gameOverMethod = ""; // "Checkmate" | "Stalemate" | ...
+  String _gameOverResult = ""; // "1-0" | "0-1" | "1/2-1/2" (server-driven)
+  String _gameOverMethod = ""; // "Checkmate" | "Stalemate" | "Resignation" | ...
+  // When the ending is decided locally (resign / disconnect) rather than by a
+  // "1-0"/"0-1"/"1/2-1/2" message from the server, _localWin holds the
+  // outcome directly. Null means "use _gameOverResult instead".
+  bool? _localWin;
   // ────────────────────────────────────────────────────────────────────────
 
   final List<String> messages = [];
@@ -54,9 +58,12 @@ class _GameScreenState extends State<GameScreen> {
   void initState() {
     super.initState();
     addMessage("Joined room: ${widget.userId}");
-    widget.gameChannel.stream.listen((msg) {
-      handleGame(msg.toString());
-    });
+    widget.gameChannel.stream.listen(
+      (msg) => handleGame(msg.toString()),
+      onDone: _handleDisconnected,
+      onError: (_) => _handleDisconnected(),
+      cancelOnError: true,
+    );
   }
 
   // ======================================================
@@ -83,7 +90,15 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 3. Opponent move — LongAlgebraicNotation
+    // 3. Resignation (server relays "resign" from either side)
+    if (plain == "resign") {
+      if (_showGameOverOverlay) return; // already resolved locally
+      addMessage("🏳️ Opponent resigned");
+      _triggerLocalGameOver(won: true, method: "Resignation");
+      return;
+    }
+
+    // 4. Opponent move — LongAlgebraicNotation
     if (RegExp(
       r'^(O-O-O|O-O|[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?)$',
     ).hasMatch(plain)) {
@@ -91,14 +106,14 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 4. Game over result
+    // 5. Game over result
     if (plain == "1-0" || plain == "0-1" || plain == "1/2-1/2") {
       addMessage("🏁 Game Over: $plain");
       _triggerGameOver(plain);
       return;
     }
 
-    // 5. Game method — store it for the overlay
+    // 6. Game method — store it for the overlay
     if (plain == "Checkmate" ||
         plain == "Stalemate" ||
         plain == "DrawOffer" ||
@@ -117,9 +132,67 @@ class _GameScreenState extends State<GameScreen> {
       addMessage("name  is "+opponentName); // achraf
       return;
     }
+    // if (plain.startsWith("opponent: ")) {
+    //   String opponentName = plain.split(":")[2].trim();
+    //   addMessage("name  is "+opponentName); // achraf
+    //   return;
+    // }
 
-    // 6. Fallback
+    // 7. Fallback
     addMessage("⚠️ Server: $plain");
+  }
+
+  // ======================================================
+  // RESIGN
+  // ======================================================
+
+  Future<void> _resign() async {
+    if (_showGameOverOverlay) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text(
+          "Resign game?",
+          style: TextStyle(fontWeight: FontWeight.w600, color: primaryDark),
+        ),
+        content: const Text("This will end the game as a loss for you."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Resign", style: TextStyle(color: loseRed)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      widget.gameChannel.sink.add("resign");
+    } catch (_) {
+      // Socket may already be closed; still end the game locally.
+    }
+
+    addMessage("You: resign");
+    _triggerLocalGameOver(won: false, method: "Resignation");
+  }
+
+  // ======================================================
+  // DISCONNECT
+  // ======================================================
+
+  void _handleDisconnected() {
+    if (!mounted || _showGameOverOverlay) return;
+    addMessage("⚠️ Connection closed");
+    _triggerLocalGameOver(won: true, method: "Opponent Disconnected");
   }
 
   // ======================================================
@@ -130,6 +203,20 @@ class _GameScreenState extends State<GameScreen> {
     boardController.resetBoard();
     setState(() {
       _gameOverResult = result;
+      _localWin = null;
+      _showGameOverOverlay = true;
+      myTurn = false;
+    });
+  }
+
+  /// For endings decided on this client directly (resign / disconnect)
+  /// rather than parsed from a "1-0"/"0-1"/"1/2-1/2" server message.
+  void _triggerLocalGameOver({required bool won, required String method}) {
+    if (!mounted) return;
+    setState(() {
+      _gameOverResult = "";
+      _gameOverMethod = method;
+      _localWin = won;
       _showGameOverOverlay = true;
       myTurn = false;
     });
@@ -145,8 +232,28 @@ class _GameScreenState extends State<GameScreen> {
 
   /// Returns (emoji, headline, subline, overlayColor)
   (String, String, String, painting.Color) _gameOverInfo() {
-    final isWhite = color == "white";
     final method = _gameOverMethod.isNotEmpty ? _gameOverMethod : "";
+
+    // Locally-decided ending (resign / disconnect) takes priority.
+    if (_localWin != null) {
+      if (_localWin!) {
+        return (
+          "🏆",
+          "You Won!",
+          method.isNotEmpty ? method : "Opponent left",
+          winGreen
+        );
+      } else {
+        return (
+          "😔",
+          "You Lost",
+          method.isNotEmpty ? method : "You resigned",
+          loseRed
+        );
+      }
+    }
+
+    final isWhite = color == "white";
 
     if (_gameOverResult == "1/2-1/2") {
       return (
@@ -504,24 +611,26 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 8),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: accentColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    _gameOverResult,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: accentColor,
-                      letterSpacing: 1.2,
+                if (_gameOverResult.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: accentColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      _gameOverResult,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: accentColor,
+                        letterSpacing: 1.2,
+                      ),
                     ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 28),
                 SizedBox(
                   width: double.infinity,
@@ -581,6 +690,13 @@ class _GameScreenState extends State<GameScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.flag_outlined),
+            tooltip: "Resign",
+            onPressed: _showGameOverOverlay ? null : _resign,
+          ),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
