@@ -32,10 +32,14 @@ class _GameScreenState extends State<GameScreen> {
   String? _selectedSquare;
   List<String> _validMoveSquares = [];
 
+  // Opponent's display name, parsed from "opponent: <name>" server messages.
+  String opponentName = "";
+
   // ── Game-over overlay state ──────────────────────────────────────────────
   bool _showGameOverOverlay = false;
   String _gameOverResult = ""; // "1-0" | "0-1" | "1/2-1/2" (server-driven)
-  String _gameOverMethod = ""; // "Checkmate" | "Stalemate" | "Resignation" | ...
+  String _gameOverMethod =
+      ""; // "Checkmate" | "Stalemate" | "Resignation" | ...
   // When the ending is decided locally (resign / disconnect) rather than by a
   // "1-0"/"0-1"/"1/2-1/2" message from the server, _localWin holds the
   // outcome directly. Null means "use _gameOverResult instead".
@@ -90,13 +94,8 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 3. Resignation (server relays "resign" from either side)
-    if (plain == "resign") {
-      if (_showGameOverOverlay) return; // already resolved locally
-      addMessage("🏳️ Opponent resigned");
-      _triggerLocalGameOver(won: true, method: "Resignation");
-      return;
-    }
+    
+   
 
     // 4. Opponent move — LongAlgebraicNotation
     if (RegExp(
@@ -106,6 +105,12 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
+    if (plain.startsWith("You won")) {
+      addMessage("You won message received");
+      addMessage("🏁 Game Over: $plain");
+      _triggerLocalGameOver(won: true, method: "Resignation");
+      return;
+    }
     // 5. Game over result
     if (plain == "1-0" || plain == "0-1" || plain == "1/2-1/2") {
       addMessage("🏁 Game Over: $plain");
@@ -127,18 +132,15 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
+    // 7. Opponent name announcement
     if (plain.startsWith("opponent: ")) {
-      String opponentName = plain.split(":")[2].trim();
-      addMessage("name  is "+opponentName); // achraf
+      final name = plain.substring("opponent: ".length).trim();
+      setState(() => opponentName = name);
+      addMessage("Opponent name is $name");
       return;
     }
-    // if (plain.startsWith("opponent: ")) {
-    //   String opponentName = plain.split(":")[2].trim();
-    //   addMessage("name  is "+opponentName); // achraf
-    //   return;
-    // }
 
-    // 7. Fallback
+    // 8. Fallback
     addMessage("⚠️ Server: $plain");
   }
 
@@ -175,14 +177,58 @@ class _GameScreenState extends State<GameScreen> {
 
     if (confirmed != true) return;
 
-    try {
-      widget.gameChannel.sink.add("resign");
-    } catch (_) {
-      // Socket may already be closed; still end the game locally.
-    }
+    _notifyLeftAndCloseSocket();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LobbyScreen()),
+    );
+  }
 
-    addMessage("You: resign");
-    _triggerLocalGameOver(won: false, method: "Resignation");
+  // ======================================================
+  // QUIT
+  // ======================================================
+
+  /// Leaves the game immediately (no game-over overlay) and returns to the
+  /// lobby. Still tells the server via "resign" so the opponent is informed.
+  Future<void> _quitGame() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          "Quit game?",
+          style: TextStyle(fontWeight: FontWeight.w600, color: primaryDark),
+        ),
+        content: const Text(
+          "You'll leave the game right away and return to the lobby.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Quit", style: TextStyle(color: loseRed)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    _notifyLeftAndCloseSocket();
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LobbyScreen()),
+    );
+  }
+
+  void _notifyLeftAndCloseSocket() {
+    // addMessage("Y");
+    if (_showGameOverOverlay) return; // game already ended
+    widget.gameChannel.sink.add("resign");
+    widget.gameChannel.sink.close();
   }
 
   // ======================================================
@@ -218,7 +264,7 @@ class _GameScreenState extends State<GameScreen> {
       _gameOverMethod = method;
       _localWin = won;
       _showGameOverOverlay = true;
-      myTurn = false;
+      myTurn = true; // allow resigning to be sent to server if needed
     });
   }
 
@@ -611,26 +657,6 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                   textAlign: TextAlign.center,
                 ),
-                if (_gameOverResult.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: accentColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      _gameOverResult,
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: accentColor,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                ],
                 const SizedBox(height: 28),
                 SizedBox(
                   width: double.infinity,
@@ -692,6 +718,11 @@ class _GameScreenState extends State<GameScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
+            icon: const Icon(Icons.exit_to_app),
+            tooltip: "Quit",
+            onPressed: _quitGame,
+          ),
+          IconButton(
             icon: const Icon(Icons.flag_outlined),
             tooltip: "Resign",
             onPressed: _showGameOverOverlay ? null : _resign,
@@ -712,6 +743,8 @@ class _GameScreenState extends State<GameScreen> {
             children: [
               const SizedBox(height: 70),
               _buildStatusChip(),
+              const SizedBox(height: 10),
+              _buildPlayersRow(),
               const SizedBox(height: 10),
               _buildTurnChip(),
               const SizedBox(height: 16),
@@ -814,6 +847,45 @@ class _GameScreenState extends State<GameScreen> {
               color: Colors.white,
               fontWeight: FontWeight.w600,
               fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shows "You" vs "Opponent" names side by side.
+  Widget _buildPlayersRow() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Flexible(
+            child: Text(
+              "🧑 ${widget.username.isNotEmpty ? widget.username : 'You'}",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const Text(
+            "vs",
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          Flexible(
+            child: Text(
+              "${opponentName.isNotEmpty ? opponentName : 'Opponent'} 🎮",
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
             ),
           ),
         ],

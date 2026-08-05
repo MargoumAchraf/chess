@@ -206,13 +206,13 @@ func (c *ChessHub) StartGame(userID string) error {
 			// still connected.
 			disconnected = true
 			winner := players[oppositeColor]
-			color_player  := client.Color;
 			if winner.ActiveConn != nil {
-				if color_player == ColorWhite {
-					winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("1-0"))
-				} else {
-					winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("0-1"))
-				}
+				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("You won"))
+				// if color_player == ColorWhite {
+				// 	winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("1-0"))
+				// } else {
+				// 	winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("0-1"))
+				// }
 			}
 			break
 		}
