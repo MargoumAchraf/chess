@@ -94,9 +94,6 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    
-   
-
     // 4. Opponent move — LongAlgebraicNotation
     if (RegExp(
       r'^(O-O-O|O-O|[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?)$',
@@ -744,7 +741,7 @@ class _GameScreenState extends State<GameScreen> {
               const SizedBox(height: 70),
               _buildStatusChip(),
               const SizedBox(height: 10),
-              _buildPlayersRow(),
+              _buildOpponentChip(),
               const SizedBox(height: 10),
               _buildTurnChip(),
               const SizedBox(height: 16),
@@ -753,8 +750,9 @@ class _GameScreenState extends State<GameScreen> {
                   width: double.infinity,
                   decoration: const BoxDecoration(
                     color: bgTop,
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(28)),
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(28),
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black26,
@@ -808,13 +806,12 @@ class _GameScreenState extends State<GameScreen> {
                           },
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      const Divider(height: 1, thickness: 1),
-                      Expanded(child: _buildMessageList()),
                     ],
                   ),
                 ),
               ),
+              const SizedBox(height: 60),
+              _buildMyChip(),
             ],
           ),
         ),
@@ -854,38 +851,67 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Shows "You" vs "Opponent" names side by side.
-  Widget _buildPlayersRow() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
+  /// Opponent's chip, shown above the board (top of the layout), with a
+  /// border color that reflects the opponent's actual chess color.
+  Widget _buildOpponentChip() {
+    final myColorIsWhite = color == 'white';
+    return Center(
+      child: _playerChip(
+        name: opponentName.isNotEmpty ? opponentName : 'Opponent',
+        isWhite: !myColorIsWhite,
+      ),
+    );
+  }
+
+  /// Your chip, shown just below the board — matching where your pieces
+  /// sit on the flipped board (e.g. black pieces at the bottom when you're
+  /// playing black), with a border color that reflects your actual color.
+  Widget _buildMyChip() {
+    final myColorIsWhite = color == 'white';
+    return Center(
+      child: _playerChip(
+        name: widget.username.isNotEmpty ? widget.username : 'You',
+        isWhite: myColorIsWhite,
+      ),
+    );
+  }
+
+  /// A small bordered chip for a player's name with a dot + border color
+  /// indicating whether that player is white or black.
+  Widget _playerChip({
+    required String name,
+    required bool isWhite,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isWhite
+              ? Colors.white.withOpacity(0.85)
+              : Colors.black.withOpacity(0.55),
+          width: 1.5,
+        ),
+      ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisSize: MainAxisSize.min,
         children: [
+          Icon(
+            isWhite ? Icons.circle : Icons.circle_outlined,
+            size: 10,
+            color: isWhite ? Colors.white : Colors.white70,
+          ),
+          const SizedBox(width: 6),
           Flexible(
             child: Text(
-              "🧑 ${widget.username.isNotEmpty ? widget.username : 'You'}",
-              style: const TextStyle(
-                color: Colors.white,
+              name,
+              style: TextStyle(
+                color: isWhite ? Colors.white : const Color(0xFF1A1A1A),
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
               overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const Text(
-            "vs",
-            style: TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          Flexible(
-            child: Text(
-              "${opponentName.isNotEmpty ? opponentName : 'Opponent'} 🎮",
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.end,
             ),
           ),
         ],
