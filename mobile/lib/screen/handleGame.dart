@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart' as painting;
 import 'package:mobile/screen/LobbyScreen.dart';
@@ -77,7 +80,7 @@ class _GameScreenState extends State<GameScreen> {
   void handleGame(String msg) {
     addMessage(msg);
     final plain = msg.trim();
-
+    print("Received: $plain");
     // 1. Color assignment
     if (plain == "white" || plain == "black") {
       setState(() {
@@ -233,9 +236,10 @@ class _GameScreenState extends State<GameScreen> {
   // ======================================================
 
   void _handleDisconnected() {
+    print("WebSocket disconnected");
     if (!mounted || _showGameOverOverlay) return;
     addMessage("⚠️ Connection closed");
-    _triggerLocalGameOver(won: true, method: "Opponent Disconnected");
+    _triggerLocalGameOver(won: false, method: "Opponent Disconnected");
   }
 
   // ======================================================
@@ -243,6 +247,7 @@ class _GameScreenState extends State<GameScreen> {
   // ======================================================
 
   void _triggerGameOver(String result) {
+    print("Triggering game over: result=$result");
     boardController.resetBoard();
     setState(() {
       _gameOverResult = result;
@@ -255,6 +260,7 @@ class _GameScreenState extends State<GameScreen> {
   /// For endings decided on this client directly (resign / disconnect)
   /// rather than parsed from a "1-0"/"0-1"/"1/2-1/2" server message.
   void _triggerLocalGameOver({required bool won, required String method}) {
+    print("Triggering local game over: won=$won, method=$method");
     if (!mounted) return;
     setState(() {
       _gameOverResult = "";
@@ -696,7 +702,6 @@ class _GameScreenState extends State<GameScreen> {
     widget.gameChannel.sink.close();
     super.dispose();
   }
-
   // ======================================================
   // UI
   // ======================================================
@@ -810,8 +815,9 @@ class _GameScreenState extends State<GameScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 60),
+              const SizedBox(height: 20),
               _buildMyChip(),
+              const SizedBox(height: 50),
             ],
           ),
         ),
