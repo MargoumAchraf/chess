@@ -1,9 +1,14 @@
 import 'dart:async';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/painting.dart' as painting;
 import 'package:mobile/screen/LobbyScreen.dart';
+import 'package:mobile/widgets/game_over_overlay.dart';
+import 'package:mobile/widgets/game_status_chip.dart';
+import 'package:mobile/widgets/move_overlay.dart';
+import 'package:mobile/widgets/player_chip.dart';
+import 'package:mobile/widgets/promotion_dialog.dart';
+import 'package:mobile/widgets/turn_chip.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:flutter_chess_board/flutter_chess_board.dart' hide Color;
 
@@ -54,7 +59,6 @@ class _GameScreenState extends State<GameScreen> {
   // ── Theme (matches LobbyScreen) ──────────────────────────────────────────
   static const Color primaryDark = Color(0xFF3E2723);
   static const Color primary = Color(0xFF6D4C41);
-  static const Color accent = Color(0xFFD7A86E);
   static const Color bgTop = Color(0xFFFFF8F0);
   static const Color winGreen = Color(0xFF2E7D32);
   static const Color loseRed = Color(0xFFC62828);
@@ -204,7 +208,7 @@ class _GameScreenState extends State<GameScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(context).pop(),
             child: const Text("Cancel"),
           ),
           TextButton(
@@ -403,7 +407,6 @@ class _GameScreenState extends State<GameScreen> {
         lan = '$lan#';
       }
     }
-
     widget.gameChannel.sink.add(lan);
 
     setState(() {
@@ -523,28 +526,7 @@ class _GameScreenState extends State<GameScreen> {
   // ======================================================
 
   Future<void> _showPromotionDialog(String from, String to) async {
-    final promoted = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: const Text(
-          "Promote pawn",
-          style: TextStyle(fontWeight: FontWeight.w600, color: primaryDark),
-        ),
-        content: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _promotionButton('q', '♛'),
-            _promotionButton('r', '♜'),
-            _promotionButton('b', '♝'),
-            _promotionButton('n', '♞'),
-          ],
-        ),
-      ),
-    );
+    final promoted = await PromotionDialog.show(context);
 
     if (promoted == null) return;
 
@@ -562,133 +544,6 @@ class _GameScreenState extends State<GameScreen> {
     sendMove();
   }
 
-  Widget _promotionButton(String piece, String symbol) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(piece),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: bgTop,
-          shape: BoxShape.circle,
-          border: Border.all(color: accent, width: 1.5),
-        ),
-        child: Text(symbol,
-            style: const TextStyle(fontSize: 34, color: primaryDark)),
-      ),
-    );
-  }
-
-  // ======================================================
-  // OVERLAY BUILDER
-  // ======================================================
-
-  Widget _buildMoveOverlay(double boardSize) {
-    return GestureDetector(
-      onTapDown: (details) {
-        final squareSize = boardSize / 8;
-        final col = (details.localPosition.dx / squareSize).floor();
-        final row = (details.localPosition.dy / squareSize).floor();
-        if (col < 0 || col > 7 || row < 0 || row > 7) return;
-
-        const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        final ranks = color == 'black'
-            ? ['1', '2', '3', '4', '5', '6', '7', '8']
-            : ['8', '7', '6', '5', '4', '3', '2', '1'];
-        final filesOrdered =
-            color == 'black' ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'] : files;
-
-        _onSquareTapped('${filesOrdered[col]}${ranks[row]}');
-      },
-      child: CustomPaint(
-        size: Size(boardSize, boardSize),
-        painter: _MoveHighlightPainter(
-          selectedSquare: _selectedSquare,
-          validSquares: _validMoveSquares,
-          isBlack: color == 'black',
-        ),
-      ),
-    );
-  }
-
-  // ======================================================
-  // GAME OVER OVERLAY
-  // ======================================================
-
-  Widget _buildGameOverOverlay(double boardSize) {
-    final (emoji, headline, subline, accentColor) = _gameOverInfo();
-
-    return Positioned.fill(
-      child: Container(
-        color: Colors.black.withOpacity(0.72),
-        child: Center(
-          child: Container(
-            width: boardSize * 0.82,
-            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
-            decoration: BoxDecoration(
-              color: bgTop,
-              borderRadius: BorderRadius.circular(22),
-              border:
-                  Border.all(color: accentColor.withOpacity(0.25), width: 1.5),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.35),
-                  blurRadius: 32,
-                  spreadRadius: 4,
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(emoji, style: const TextStyle(fontSize: 56)),
-                const SizedBox(height: 12),
-                Text(
-                  headline,
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: accentColor,
-                    letterSpacing: 0.3,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  subline,
-                  style: TextStyle(
-                    fontSize: 15,
-                    color: primaryDark.withOpacity(0.65),
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 28),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _dismissGameOver,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
-                    ),
-                    child: const Text(
-                      "Play Again",
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   // ======================================================
   // HELPERS
   // ======================================================
@@ -702,6 +557,7 @@ class _GameScreenState extends State<GameScreen> {
     widget.gameChannel.sink.close();
     super.dispose();
   }
+
   // ======================================================
   // UI
   // ======================================================
@@ -744,11 +600,11 @@ class _GameScreenState extends State<GameScreen> {
           child: Column(
             children: [
               const SizedBox(height: 70),
-              _buildStatusChip(),
+              GameStatusChip(color: color),
               const SizedBox(height: 10),
               _buildOpponentChip(),
               const SizedBox(height: 10),
-              _buildTurnChip(),
+              TurnChip(myTurn: myTurn),
               const SizedBox(height: 16),
               Expanded(
                 child: Container(
@@ -800,10 +656,31 @@ class _GameScreenState extends State<GameScreen> {
                                     ),
                                     if (myTurn && !_showGameOverOverlay)
                                       Positioned.fill(
-                                        child: _buildMoveOverlay(boardSize),
+                                        child: MoveOverlay(
+                                          boardSize: boardSize,
+                                          selectedSquare: _selectedSquare,
+                                          validSquares: _validMoveSquares,
+                                          isBlack: color == 'black',
+                                          onSquareTapped: _onSquareTapped,
+                                        ),
                                       ),
                                     if (_showGameOverOverlay)
-                                      _buildGameOverOverlay(boardSize),
+                                      Builder(builder: (context) {
+                                        final (
+                                          emoji,
+                                          headline,
+                                          subline,
+                                          accentColor
+                                        ) = _gameOverInfo();
+                                        return GameOverOverlay(
+                                          boardSize: boardSize,
+                                          emoji: emoji,
+                                          headline: headline,
+                                          subline: subline,
+                                          accentColor: accentColor,
+                                          onPlayAgain: _dismissGameOver,
+                                        );
+                                      }),
                                   ],
                                 ),
                               ),
@@ -825,44 +702,12 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  Widget _buildStatusChip() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withOpacity(0.25)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            color == 'white' ? Icons.circle : Icons.circle_outlined,
-            size: 12,
-            color: color == 'white' ? Colors.white : Colors.white70,
-          ),
-          const SizedBox(width: 10),
-          Text(
-            color.isNotEmpty
-                ? "Playing as ${color[0].toUpperCase()}${color.substring(1)}"
-                : "Connecting…",
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// Opponent's chip, shown above the board (top of the layout), with a
   /// border color that reflects the opponent's actual chess color.
   Widget _buildOpponentChip() {
     final myColorIsWhite = color == 'white';
     return Center(
-      child: _playerChip(
+      child: PlayerChip(
         name: opponentName.isNotEmpty ? opponentName : 'Opponent',
         isWhite: !myColorIsWhite,
       ),
@@ -875,161 +720,10 @@ class _GameScreenState extends State<GameScreen> {
   Widget _buildMyChip() {
     final myColorIsWhite = color == 'white';
     return Center(
-      child: _playerChip(
+      child: PlayerChip(
         name: widget.username.isNotEmpty ? widget.username : 'You',
         isWhite: myColorIsWhite,
       ),
     );
   }
-
-  /// A small bordered chip for a player's name with a dot + border color
-  /// indicating whether that player is white or black.
-  Widget _playerChip({
-    required String name,
-    required bool isWhite,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.10),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isWhite
-              ? Colors.white.withOpacity(0.85)
-              : Colors.black.withOpacity(0.55),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isWhite ? Icons.circle : Icons.circle_outlined,
-            size: 10,
-            color: isWhite ? Colors.white : Colors.white70,
-          ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              name,
-              style: TextStyle(
-                color: isWhite ? Colors.white : const Color(0xFF1A1A1A),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTurnChip() {
-    final label = myTurn ? "♟ Your turn" : "⏳ Opponent's turn";
-    final chipColor = myTurn ? winGreen : accent;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: chipColor.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: 13,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageList() {
-    if (messages.isEmpty) {
-      return const Center(
-        child: Text(
-          "No activity yet",
-          style: TextStyle(color: Colors.grey),
-        ),
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      reverse: true,
-      itemCount: messages.length,
-      itemBuilder: (_, i) => Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.brown.shade100),
-        ),
-        child: Text(
-          messages[i],
-          style: const TextStyle(fontSize: 13, color: Colors.black87),
-        ),
-      ),
-    );
-  }
-}
-
-// ======================================================
-// CUSTOM PAINTER
-// ======================================================
-
-class _MoveHighlightPainter extends CustomPainter {
-  final String? selectedSquare;
-  final List<String> validSquares;
-  final bool isBlack;
-
-  const _MoveHighlightPainter({
-    required this.selectedSquare,
-    required this.validSquares,
-    required this.isBlack,
-  });
-
-  Offset _squareToOffset(String sq, double squareSize) {
-    final files = isBlack
-        ? ['h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
-        : ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-    final ranks = isBlack
-        ? ['1', '2', '3', '4', '5', '6', '7', '8']
-        : ['8', '7', '6', '5', '4', '3', '2', '1'];
-
-    final col = files.indexOf(sq[0]);
-    final row = ranks.indexOf(sq[1]);
-    return Offset(col * squareSize, row * squareSize);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final squareSize = size.width / 8;
-
-    if (selectedSquare != null) {
-      final offset = _squareToOffset(selectedSquare!, squareSize);
-      canvas.drawRect(
-        Rect.fromLTWH(offset.dx, offset.dy, squareSize, squareSize),
-        Paint()..color = const Color(0xFFD7A86E).withOpacity(0.55),
-      );
-    }
-
-    final dotPaint = Paint()..color = const Color(0xFF2E7D32).withOpacity(0.55);
-    for (final sq in validSquares) {
-      final offset = _squareToOffset(sq, squareSize);
-      final center = Offset(
-        offset.dx + squareSize / 2,
-        offset.dy + squareSize / 2,
-      );
-      canvas.drawCircle(center, squareSize * 0.18, dotPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MoveHighlightPainter old) =>
-      old.selectedSquare != selectedSquare ||
-      old.validSquares != validSquares ||
-      old.isBlack != isBlack;
 }

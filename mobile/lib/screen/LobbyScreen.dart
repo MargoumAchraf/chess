@@ -1,5 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:mobile/screen/handleGame.dart';
+import 'package:mobile/widgets/join_button.dart';
+import 'package:mobile/widgets/message_list.dart';
+import 'package:mobile/widgets/name_field.dart';
+import 'package:mobile/widgets/restart_button.dart';
+import 'package:mobile/widgets/status_chip.dart';
+import 'package:mobile/widgets/welcome_text.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -11,6 +17,10 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> {
+  static const Color primaryDark = Color(0xFF3E2723);
+  static const Color primary = Color(0xFF6D4C41);
+  static const Color bgTop = Color(0xFFFFF8F0);
+
   WebSocketChannel? lobbyChannel;
 
   String userId = "";
@@ -19,12 +29,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   final TextEditingController nameController = TextEditingController();
   final List<String> messages = [];
-
-  // Theme colors
-  static const Color primaryDark = Color(0xFF3E2723);
-  static const Color primary = Color(0xFF6D4C41);
-  static const Color accent = Color(0xFFD7A86E);
-  static const Color bgTop = Color(0xFFFFF8F0);
 
   // ======================================================
   // LOBBY
@@ -38,7 +42,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     }
 
     setState(() => username = name);
-    print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"+username);
+
     lobbyChannel = IOWebSocketChannel.connect(
       Uri.parse(
         "wss://crusader-arming-riverboat.ngrok-free.dev/rooms?name=$username",
@@ -89,6 +93,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   // ======================================================
+  // RESTART
+  // ======================================================
+
+  void restartLobby() {
+    // Tear down any existing connection.
+    lobbyChannel?.sink.close();
+    lobbyChannel = null;
+
+    setState(() {
+      userId = "";
+      status = "idle";
+      messages.clear();
+    });
+
+    addMessage("🔄 Restarted. Ready to join again.");
+  }
+
+  // ======================================================
   // HELPERS
   // ======================================================
 
@@ -135,7 +157,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
           child: Column(
             children: [
               const SizedBox(height: 70),
-              _buildStatusChip(isWaiting),
+              StatusChip(isWaiting: isWaiting, username: username),
               const SizedBox(height: 20),
               Expanded(
                 child: Container(
@@ -155,167 +177,24 @@ class _LobbyScreenState extends State<LobbyScreen> {
                   child: Column(
                     children: [
                       const SizedBox(height: 24),
-                      if (username.isNotEmpty) _buildWelcomeText(),
-                      _buildNameField(isWaiting),
+                      if (username.isNotEmpty) WelcomeText(username: username),
+                      NameField(
+                          controller: nameController, isWaiting: isWaiting),
                       const SizedBox(height: 16),
-                      _buildJoinButton(isWaiting),
+                      JoinButton(status: status, onPressed: connectLobby),
+                      if (isWaiting) ...[
+                        const SizedBox(height: 12),
+                        RestartButton(onPressed: restartLobby),
+                      ],
                       const SizedBox(height: 16),
                       const Divider(height: 1, thickness: 1),
-                      Expanded(child: _buildMessageList()),
+                      Expanded(child: MessageList(messages: messages)),
                     ],
                   ),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatusChip(bool isWaiting) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(30),
-        border: Border.all(color: Colors.white.withOpacity(0.25)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (isWaiting)
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation<Color>(accent),
-              ),
-            )
-          else
-            const Icon(Icons.circle, size: 10, color: Colors.greenAccent),
-          const SizedBox(width: 10),
-          Text(
-            isWaiting
-                ? (username.isNotEmpty
-                    ? "Waiting for opponent, $username…"
-                    : "Waiting for opponent…")
-                : "Idle",
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 14,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWelcomeText() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Row(
-          children: [
-            const Icon(Icons.person, size: 18, color: primary),
-            const SizedBox(width: 6),
-            Text(
-              "Playing as $username",
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: primaryDark,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNameField(bool isWaiting) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: TextField(
-        controller: nameController,
-        enabled: !isWaiting,
-        decoration: InputDecoration(
-          labelText: "Your Name",
-          prefixIcon: const Icon(Icons.person_outline, color: primary),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide.none,
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: BorderSide(color: Colors.brown.shade100),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: primary, width: 1.5),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildJoinButton(bool isWaiting) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: status == "idle" ? connectLobby : null,
-          icon: Icon(isWaiting ? Icons.hourglass_top : Icons.play_arrow),
-          label: Text(
-            isWaiting ? "Waiting for opponent…" : "Join Game",
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: primary,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: primary.withOpacity(0.5),
-            disabledForegroundColor: Colors.white70,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-            elevation: 2,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageList() {
-    if (messages.isEmpty) {
-      return const Center(
-        child: Text(
-          "No activity yet",
-          style: TextStyle(color: Colors.grey),
-        ),
-      );
-    }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      reverse: true,
-      itemCount: messages.length,
-      itemBuilder: (_, i) => Container(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: Colors.brown.shade100),
-        ),
-        child: Text(
-          messages[i],
-          style: const TextStyle(fontSize: 13, color: Colors.black87),
         ),
       ),
     );
