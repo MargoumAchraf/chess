@@ -3,7 +3,6 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	"back-end/src"
 
@@ -15,7 +14,7 @@ func main() {
 		chessHub = src.NewChessHub()
 		router   = mux.NewRouter()
 
-		port = getenv("PORT", "8080")
+		port = "8080"
 	)
 
 	router.HandleFunc("/rooms", chessHub.PickRoom)
@@ -26,12 +25,4 @@ func main() {
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Println(err)
 	}
-}
-
-func getenv(key, fallback string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return fallback
-	}
-	return value
 }

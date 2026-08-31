@@ -32,7 +32,7 @@ class _GameScreenState extends State<GameScreen> {
   final ChessBoardController boardController = ChessBoardController();
 
   String color = "";
-  String status = "playing"; // playing (kept for the turn banner)
+  String status = "playing";
   bool myTurn = false;
   bool _isApplyingOpponentMove = false;
   int _lastHistoryLength = 0;
@@ -40,30 +40,21 @@ class _GameScreenState extends State<GameScreen> {
   String? _selectedSquare;
   List<String> _validMoveSquares = [];
 
-  // Opponent's display name, parsed from "opponent: <name>" server messages.
   String opponentName = "";
 
-  // ── Game-over overlay state ──────────────────────────────────────────────
   bool _showGameOverOverlay = false;
-  String _gameOverResult = ""; // "1-0" | "0-1" | "1/2-1/2" (server-driven)
-  String _gameOverMethod =
-      ""; // "Checkmate" | "Stalemate" | "Resignation" | ...
-  // When the ending is decided locally (resign / disconnect) rather than by a
-  // "1-0"/"0-1"/"1/2-1/2" message from the server, _localWin holds the
-  // outcome directly. Null means "use _gameOverResult instead".
+  String _gameOverResult = "";
+  String _gameOverMethod = "";
   bool? _localWin;
-  // ────────────────────────────────────────────────────────────────────────
 
   final List<String> messages = [];
 
-  // ── Theme (matches LobbyScreen) ──────────────────────────────────────────
   static const Color primaryDark = Color(0xFF3E2723);
   static const Color primary = Color(0xFF6D4C41);
   static const Color bgTop = Color(0xFFFFF8F0);
   static const Color winGreen = Color(0xFF2E7D32);
   static const Color loseRed = Color(0xFFC62828);
   static const Color drawAmber = Color(0xFFB8860B);
-  // ────────────────────────────────────────────────────────────────────────
 
   @override
   void initState() {
@@ -77,15 +68,10 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  // ======================================================
-  // GAME LOGIC
-  // ======================================================
-
   void handleGame(String msg) {
     addMessage(msg);
     final plain = msg.trim();
     print("Received: $plain");
-    // 1. Color assignment
     if (plain == "white" || plain == "black") {
       setState(() {
         color = plain;
@@ -94,14 +80,12 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 2. Invalid move
     if (plain == "invalid_move") {
       setState(() => myTurn = true);
       addMessage("⚠️ Invalid move, try again");
       return;
     }
 
-    // 4. Opponent move — LongAlgebraicNotation
     if (RegExp(
       r'^(O-O-O|O-O|[NBRQK]?[a-h][1-8]x?[a-h][1-8][qrbnQRBN]?)$',
     ).hasMatch(plain)) {
@@ -115,14 +99,12 @@ class _GameScreenState extends State<GameScreen> {
       _triggerLocalGameOver(won: true, method: "Resignation");
       return;
     }
-    // 5. Game over result
     if (plain == "1-0" || plain == "0-1" || plain == "1/2-1/2") {
       addMessage("🏁 Game Over: $plain");
       _triggerGameOver(plain);
       return;
     }
 
-    // 6. Game method — store it for the overlay
     if (plain == "Checkmate" ||
         plain == "Stalemate" ||
         plain == "DrawOffer" ||
@@ -136,7 +118,6 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 7. Opponent name announcement
     if (plain.startsWith("opponent: ")) {
       final name = plain.substring("opponent: ".length).trim();
       setState(() => opponentName = name);
@@ -144,13 +125,8 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    // 8. Fallback
     addMessage("⚠️ Server: $plain");
   }
-
-  // ======================================================
-  // RESIGN
-  // ======================================================
 
   Future<void> _resign() async {
     if (_showGameOverOverlay) return;
@@ -188,12 +164,6 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  // ======================================================
-  // QUIT
-  // ======================================================
-
-  /// Leaves the game immediately (no game-over overlay) and returns to the
-  /// lobby. Still tells the server via "resign" so the opponent is informed.
   Future<void> _quitGame() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -229,15 +199,10 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _notifyLeftAndCloseSocket() {
-    // addMessage("Y");
-    if (_showGameOverOverlay) return; // game already ended
+    if (_showGameOverOverlay) return;
     widget.gameChannel.sink.add("resign");
     widget.gameChannel.sink.close();
   }
-
-  // ======================================================
-  // DISCONNECT
-  // ======================================================
 
   void _handleDisconnected() {
     print("WebSocket disconnected");
@@ -245,10 +210,6 @@ class _GameScreenState extends State<GameScreen> {
     addMessage("⚠️ Connection closed");
     _triggerLocalGameOver(won: false, method: "Opponent Disconnected");
   }
-
-  // ======================================================
-  // GAME OVER
-  // ======================================================
 
   void _triggerGameOver(String result) {
     print("Triggering game over: result=$result");
@@ -261,8 +222,6 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
-  /// For endings decided on this client directly (resign / disconnect)
-  /// rather than parsed from a "1-0"/"0-1"/"1/2-1/2" server message.
   void _triggerLocalGameOver({required bool won, required String method}) {
     print("Triggering local game over: won=$won, method=$method");
     if (!mounted) return;
@@ -271,7 +230,7 @@ class _GameScreenState extends State<GameScreen> {
       _gameOverMethod = method;
       _localWin = won;
       _showGameOverOverlay = true;
-      myTurn = true; // allow resigning to be sent to server if needed
+      myTurn = true;
     });
   }
 
@@ -283,11 +242,9 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Returns (emoji, headline, subline, overlayColor)
   (String, String, String, painting.Color) _gameOverInfo() {
     final method = _gameOverMethod.isNotEmpty ? _gameOverMethod : "";
 
-    // Locally-decided ending (resign / disconnect) takes priority.
     if (_localWin != null) {
       if (_localWin!) {
         return (
@@ -336,10 +293,6 @@ class _GameScreenState extends State<GameScreen> {
       );
     }
   }
-
-  // ======================================================
-  // SEND MOVE
-  // ======================================================
 
   void sendMove() {
     if (_isApplyingOpponentMove) return;
@@ -418,10 +371,6 @@ class _GameScreenState extends State<GameScreen> {
     addMessage("You: $lan");
   }
 
-  // ======================================================
-  // APPLY OPPONENT MOVE
-  // ======================================================
-
   void _applyOpponentMove(String lan) {
     String from, to;
     String promotion = 'q';
@@ -462,10 +411,6 @@ class _GameScreenState extends State<GameScreen> {
       _validMoveSquares = [];
     });
   }
-
-  // ======================================================
-  // HIGHLIGHT
-  // ======================================================
 
   void _onSquareTapped(String square) {
     if (!myTurn || _isApplyingOpponentMove) return;
@@ -511,8 +456,7 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    final moves =
-        game.moves({'square': square, 'verbose': true}) as List<dynamic>;
+    final moves = game.moves({'square': square, 'verbose': true}) as List<dynamic>;
     final targets = moves.map((m) => (m as Map)['to'] as String).toList();
 
     setState(() {
@@ -520,10 +464,6 @@ class _GameScreenState extends State<GameScreen> {
       _validMoveSquares = targets;
     });
   }
-
-  // ======================================================
-  // PROMOTION DIALOG
-  // ======================================================
 
   Future<void> _showPromotionDialog(String from, String to) async {
     final promoted = await PromotionDialog.show(context);
@@ -544,10 +484,6 @@ class _GameScreenState extends State<GameScreen> {
     sendMove();
   }
 
-  // ======================================================
-  // HELPERS
-  // ======================================================
-
   void addMessage(String m) {
     setState(() => messages.insert(0, m));
   }
@@ -557,10 +493,6 @@ class _GameScreenState extends State<GameScreen> {
     widget.gameChannel.sink.close();
     super.dispose();
   }
-
-  // ======================================================
-  // UI
-  // ======================================================
 
   @override
   Widget build(BuildContext context) {
@@ -702,8 +634,6 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Opponent's chip, shown above the board (top of the layout), with a
-  /// border color that reflects the opponent's actual chess color.
   Widget _buildOpponentChip() {
     final myColorIsWhite = color == 'white';
     return Center(
@@ -714,9 +644,6 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Your chip, shown just below the board — matching where your pieces
-  /// sit on the flipped board (e.g. black pieces at the bottom when you're
-  /// playing black), with a border color that reflects your actual color.
   Widget _buildMyChip() {
     final myColorIsWhite = color == 'white';
     return Center(
