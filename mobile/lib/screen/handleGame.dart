@@ -55,7 +55,6 @@ class _GameScreenState extends State<GameScreen> {
   static const Color winGreen = Color(0xFF2E7D32);
   static const Color loseRed = Color(0xFFC62828);
   static const Color drawAmber = Color(0xFFB8860B);
-
   @override
   void initState() {
     super.initState();
@@ -164,7 +163,12 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  bool _isQuitting = false;
+
   Future<void> _quitGame() async {
+    if (_isQuitting) return;
+    _isQuitting = true;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -189,19 +193,31 @@ class _GameScreenState extends State<GameScreen> {
       ),
     );
 
-    if (confirmed != true) return;
-
-    _notifyLeftAndCloseSocket();
+    if (confirmed != true) {
+      _isQuitting = false;
+      return;
+    }
+    print("1111111111111111111111111111111111111");
+    await _notifyLeftAndCloseSocket();
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const LobbyScreen()),
     );
   }
 
-  void _notifyLeftAndCloseSocket() {
-    if (_showGameOverOverlay) return;
-    widget.gameChannel.sink.add("resign");
+  Future<void> _notifyLeftAndCloseSocket() async {
+    try {
+      widget.gameChannel.sink.add("quit");
+      print("Sent quit message to server");
+    } catch (e) {
+      print("Socket already closed, skipping quit message: $e");
+    }
+
+    // نعطيو وقت للـ "quit" message باش تتصيفط فعليا على السوكت
+    // قبل ما نبداو عملية الإغلاق، خاصنا نتجنبو الـ race condition.
+    await Future.delayed(const Duration(milliseconds: 100));
     widget.gameChannel.sink.close();
+    try {} catch (_) {}
   }
 
   void _handleDisconnected() {
@@ -456,7 +472,8 @@ class _GameScreenState extends State<GameScreen> {
       return;
     }
 
-    final moves = game.moves({'square': square, 'verbose': true}) as List<dynamic>;
+    final moves =
+        game.moves({'square': square, 'verbose': true}) as List<dynamic>;
     final targets = moves.map((m) => (m as Map)['to'] as String).toList();
 
     setState(() {
@@ -490,7 +507,7 @@ class _GameScreenState extends State<GameScreen> {
 
   @override
   void dispose() {
-    widget.gameChannel.sink.close();
+    widget.gameChannel.sink.close().catchError((_) {});
     super.dispose();
   }
 
@@ -511,11 +528,6 @@ class _GameScreenState extends State<GameScreen> {
             icon: const Icon(Icons.exit_to_app),
             tooltip: "Quit",
             onPressed: _quitGame,
-          ),
-          IconButton(
-            icon: const Icon(Icons.flag_outlined),
-            tooltip: "Resign",
-            onPressed: _showGameOverOverlay ? null : _resign,
           ),
         ],
       ),

@@ -19,10 +19,18 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+const quitMessage = "quit"
+
 type waitingPlayer struct {
 	userID string
 	name   string
 	result chan bool
+}
+type playerMsg struct {
+	color string
+	mt    int
+	data  []byte
+	err   error
 }
 
 type ChessHub struct {
@@ -114,81 +122,162 @@ func (c *ChessHub) WaitForOthers(userID string) {
 	}
 }
 
+// StartGame est le point d'entrée appelé par CHAQUE joueur (2x au total).
+// sync.Once garantit qu'un seul appel exécute réellement la boucle de jeu ;
+// le deuxième appel bloque jusqu'à la fin de la partie sans rien dupliquer.
 func (c *ChessHub) StartGame(userID string) error {
-	var (
-		client     = c.Clients[userID]
-		roomID     = client.RoomID
-		movesOrder = []string{ColorWhite, ColorBlack}
-		game       = c.Rooms[roomID].Game
-		index      = 0
-	)
-	println("Starting game for user:", userID, "in room:", roomID, "with color:", client.Color)
+	c.mu.Lock()
+	client := c.Clients[userID]
+	if client == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("client %s not found", userID)
+	}
+	roomID := client.RoomID
+	room := c.Rooms[roomID]
+	if room == nil {
+		c.mu.Unlock()
+		return fmt.Errorf("room %s not found", roomID)
+	}
+	c.mu.Unlock()
+
+	var gameErr error
+	room.gameOnce.Do(func() {
+		gameErr = c.runGame(roomID)
+	})
+	return gameErr
+}
+
+// runGame contient toute la logique de la partie. N'est exécutée qu'UNE
+// seule fois par room grâce à gameOnce dans StartGame.
+func (c *ChessHub) runGame(roomID string) error {
+	c.mu.Lock()
+	room, ok := c.Rooms[roomID]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("room %s not found", roomID)
+	}
+	game := room.Game
+	c.mu.Unlock()
+
 	players, err := c.GetPlayers(roomID)
 	if err != nil {
 		return err
 	}
 
-	opponent := players[ColorWhite]
-	if client.Color == ColorWhite {
-		opponent = players[ColorBlack]
+	println("Starting game in room:", roomID)
+
+	for _, color := range []string{ColorWhite, ColorBlack} {
+		p := players[color]
+		if p == nil || p.ActiveConn == nil {
+			continue
+		}
+		opponentColor := ColorBlack
+		if color == ColorBlack {
+			opponentColor = ColorWhite
+		}
+		opponent := players[opponentColor]
+		opponentName := "unknown"
+		if opponent != nil {
+			opponentName = opponent.Name
+		}
+		p.ActiveConn.WriteMessage(websocket.TextMessage, []byte(color))
+		p.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent: "+opponentName))
 	}
 
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(client.Color))
-	client.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent: "+opponent.Name))
+	if disconnectedColor, ok := c.findDisconnectedPlayer(players); ok {
+		winnerColor := ColorBlack
+		if disconnectedColor == ColorBlack {
+			winnerColor = ColorWhite
+		}
+		return c.endGameByDisconnect(players, winnerColor, disconnectedColor, false)
+	}
 
-	disconnected := false
+	// --- Goroutine ديال قراءة لكل لاعب، كيصيفطو لنفس الـ channel ---
+	msgCh := make(chan playerMsg, 4)
+	for _, color := range []string{ColorWhite, ColorBlack} {
+		go func(color string) {
+			conn := players[color].ActiveConn
+			for {
+				mt, data, err := conn.ReadMessage()
+				msgCh <- playerMsg{color: color, mt: mt, data: data, err: err}
+				if err != nil {
+					return // القراءة توقفت، خرج من الـ goroutine
+				}
+			}
+		}(color)
+	}
+
+	var (
+		movesOrder   = []string{ColorWhite, ColorBlack}
+		index        = 0
+		disconnected = false
+	)
 
 	for game.Outcome() == chess.NoOutcome {
-		var (
-			color         = movesOrder[index%2]
-			oppositeColor = movesOrder[(index+1)%2]
-		)
+		expectedColor := movesOrder[index%2]
+		oppositeOfExpected := movesOrder[(index+1)%2]
 
-		mt, message, err := players[color].ActiveConn.ReadMessage()
-		if err != nil || mt == websocket.CloseMessage {
+		msg := <-msgCh
+
+		// أي قطع اتصال (من أي لاعب) كيتكتشف فوري
+		if msg.err != nil || msg.mt == websocket.CloseMessage {
 			disconnected = true
-			winner := players[oppositeColor]
-			if winner.ActiveConn != nil {
-				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("You won"))
+			winner := ColorBlack
+			if msg.color == ColorBlack {
+				winner = ColorWhite
 			}
-			break
+			return c.endGameByDisconnect(players, winner, msg.color, false)
 		}
 
-		moveStr := string(message)
+		moveStr := string(msg.data)
+		println("Received message from player", players[msg.color].Name, ":", moveStr)
+
+		// "quit" مقبولة فوري من أي لاعب، بلا ما تستنى الدور
+		if moveStr == quitMessage {
+			println("Player", players[msg.color].Name, "quit voluntarily.")
+			winner := ColorBlack
+			if msg.color == ColorBlack {
+				winner = ColorWhite
+			}
+			disconnected = true
+			return c.endGameByDisconnect(players, winner, msg.color, true)
+		}
+
+		// رسالة جاية من اللاعب لي ماشي دوره → تجاهلها (ماشي move صالح)
+		if msg.color != expectedColor {
+			if players[msg.color].ActiveConn != nil {
+				players[msg.color].ActiveConn.WriteMessage(
+					websocket.TextMessage,
+					[]byte("Not your turn"),
+				)
+			}
+			continue
+		}
 
 		var finalMove *chess.Move
 		uciRegex := regexp.MustCompile(`^([a-h][1-8])([a-h][1-8])([qrbn])?$`)
 		if uciRegex.MatchString(moveStr) {
 			move, err := chess.UCINotation{}.Decode(game.Position(), moveStr)
 			if err != nil {
-				players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte("UCI Move machi valid: "+err.Error()))
+				players[expectedColor].ActiveConn.WriteMessage(websocket.TextMessage, []byte("UCI Move machi valid: "+err.Error()))
 				continue
 			}
-
 			finalMove = move
 			game.Move(finalMove)
-
 		} else {
 			if err := game.MoveStr(moveStr); err != nil {
-				players[color].ActiveConn.WriteMessage(websocket.TextMessage, []byte("Notation machi valid: "+err.Error()))
+				players[expectedColor].ActiveConn.WriteMessage(websocket.TextMessage, []byte("Notation machi valid: "+err.Error()))
 				continue
 			}
-
 			moves := game.Moves()
 			if len(moves) > 0 {
 				finalMove = moves[len(moves)-1]
 			}
 		}
 
-		if players[oppositeColor].ActiveConn == nil {
-			println("Player", players[oppositeColor].Name, "disconnected. Ending game.")
+		if players[oppositeOfExpected].ActiveConn == nil {
 			disconnected = true
-			winner := players[color]
-			if winner.ActiveConn != nil {
-				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent_disconnected"))
-				winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("win"))
-			}
-			break
+			return c.endGameByDisconnect(players, expectedColor, oppositeOfExpected, false)
 		}
 
 		var msgToSend []byte
@@ -196,32 +285,84 @@ func (c *ChessHub) StartGame(userID string) error {
 			encoded := chess.UCINotation{}.Encode(game.Position(), finalMove)
 			msgToSend = []byte(encoded)
 		} else {
-			msgToSend = message
+			msgToSend = msg.data
 		}
 
-		players[oppositeColor].ActiveConn.WriteMessage(websocket.TextMessage, msgToSend)
-
+		players[oppositeOfExpected].ActiveConn.WriteMessage(websocket.TextMessage, msgToSend)
 		index++
 	}
 
 	if !disconnected {
-		client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Outcome()))
-		client.ActiveConn.WriteMessage(websocket.TextMessage, []byte(game.Method().String()))
+		outcomeMsg := []byte(game.Outcome())
+		methodMsg := []byte(game.Method().String())
+		for _, p := range players {
+			if p.ActiveConn != nil {
+				p.ActiveConn.WriteMessage(websocket.TextMessage, outcomeMsg)
+				p.ActiveConn.WriteMessage(websocket.TextMessage, methodMsg)
+			}
+		}
 	}
 
 	return nil
 }
+// findDisconnectedPlayer retourne la couleur du joueur déconnecté (ActiveConn == nil), s'il y en a un.
+func (c *ChessHub) findDisconnectedPlayer(players map[string]*ChessClient) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, color := range []string{ColorWhite, ColorBlack} {
+		if players[color] == nil || players[color].ActiveConn == nil {
+			return color, true
+		}
+	}
+	return "", false
+}
+
+// endGameByDisconnect notifie le gagnant UNE SEULE FOIS (au lieu de 3x avant)
+// et distingue quit volontaire vs déconnexion réseau.
+func (c *ChessHub) endGameByDisconnect(players map[string]*ChessClient, winnerColor, loserColor string, voluntary bool) error {
+	winner := players[winnerColor]
+	loser := players[loserColor]
+
+	if winner != nil && winner.ActiveConn != nil {
+		if voluntary {
+			winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent_left"))
+		} else {
+			winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("opponent_disconnected"))
+		}
+		winner.ActiveConn.WriteMessage(websocket.TextMessage, []byte("You won"))
+	}
+
+	loserName := "unknown"
+	if loser != nil {
+		loserName = loser.Name
+	}
+
+	reason := "disconnected"
+	if voluntary {
+		reason = "quit voluntarily"
+	}
+	println("Player", loserName, reason, "- Ending game.")
+
+	return fmt.Errorf("player %s (%s) %s", loserName, loserColor, reason)
+}
 
 func (c *ChessHub) GetPlayers(roomID string) (map[string]*ChessClient, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	room, ok := c.Rooms[roomID]
+	if !ok {
+		return nil, fmt.Errorf("room %s not found", roomID)
+	}
+
 	players := make(map[string]*ChessClient)
-	for _, v := range c.Rooms[roomID].Clients {
+	for _, v := range room.Clients {
 		players[v.Color] = v
 	}
 	return players, nil
 }
 
 func (c *ChessHub) PickRoom(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("New user connected:")
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -264,14 +405,35 @@ func (c *ChessHub) JoinRoom(w http.ResponseWriter, r *http.Request) {
 
 	conn, _ := upgrader.Upgrade(w, r, nil)
 	defer conn.Close()
-	defer func() {
-		client := c.Clients[clientID]
-		client.ActiveConn = nil
-		delete(c.Clients, clientID)
-		delete(c.Rooms, client.RoomID)
-	}()
+	defer c.cleanupClient(clientID)
 
 	c.UserJoined(clientID, conn)
 	c.WaitForOthers(clientID)
 	c.StartGame(clientID)
+}
+
+// cleanupClient marque le client comme déconnecté, et ne supprime la room
+// que quand les DEUX joueurs sont partis, pour éviter que l'adversaire
+// tombe sur une room supprimée pendant qu'il joue encore.
+func (c *ChessHub) cleanupClient(clientID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	client, ok := c.Clients[clientID]
+	if !ok {
+		return
+	}
+	client.ActiveConn = nil
+	roomID := client.RoomID
+	delete(c.Clients, clientID)
+
+	room, ok := c.Rooms[roomID]
+	if !ok {
+		return
+	}
+	delete(room.Clients, clientID)
+
+	if len(room.Clients) == 0 {
+		delete(c.Rooms, roomID)
+	}
 }
