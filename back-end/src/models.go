@@ -1,7 +1,6 @@
 package src
 
 import (
-	"sync"
 
 	"github.com/gorilla/websocket"
 	"github.com/notnil/chess"
@@ -18,7 +17,9 @@ type ChessRoom struct {
 	Clients     map[string]*ChessClient
 	Game        *chess.Game
 	joinedCount int
-	gameOnce    sync.Once // ✅ à ajouter — empêche runGame de tourner deux fois
+	gameStarted bool
+	gameDone    chan struct{}
+	gameErr     error
 }
 
 // ChessClient represents a connected (or about-to-connect) player.

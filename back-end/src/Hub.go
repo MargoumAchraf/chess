@@ -138,12 +138,25 @@ func (c *ChessHub) StartGame(userID string) error {
 		c.mu.Unlock()
 		return fmt.Errorf("room %s not found", roomID)
 	}
+
+	if room.gameStarted {
+		c.mu.Unlock()
+		// b7al l gameOnce li kayblock l deuxième caller,
+		// hna khasna n-simuler nafss l comportement: nstna l game ykml
+		<-room.gameDone
+		return room.gameErr
+	}
+	room.gameStarted = true
+	room.gameDone = make(chan struct{})
 	c.mu.Unlock()
 
-	var gameErr error
-	room.gameOnce.Do(func() {
-		gameErr = c.runGame(roomID)
-	})
+	gameErr := c.runGame(roomID)
+
+	c.mu.Lock()
+	room.gameErr = gameErr
+	close(room.gameDone)
+	c.mu.Unlock()
+
 	return gameErr
 }
 

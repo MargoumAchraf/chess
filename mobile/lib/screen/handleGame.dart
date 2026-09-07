@@ -213,9 +213,7 @@ class _GameScreenState extends State<GameScreen> {
       print("Socket already closed, skipping quit message: $e");
     }
 
-    // نعطيو وقت للـ "quit" message باش تتصيفط فعليا على السوكت
-    // قبل ما نبداو عملية الإغلاق، خاصنا نتجنبو الـ race condition.
-    await Future.delayed(const Duration(milliseconds: 100));
+  
     widget.gameChannel.sink.close();
     try {} catch (_) {}
   }
