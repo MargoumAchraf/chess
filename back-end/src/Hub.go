@@ -1,10 +1,12 @@
 package src
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	mrand "math/rand"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -21,6 +23,9 @@ var upgrader = websocket.Upgrader{
 
 const quitMessage = "quit"
 
+// characters used to generate room codes (no ambiguous chars like 0/O, 1/I)
+const codeCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
 type waitingPlayer struct {
 	userID string
 	name   string
@@ -34,18 +39,22 @@ type playerMsg struct {
 }
 
 type ChessHub struct {
-	mu      sync.Mutex
-	queue   []*waitingPlayer
-	Rooms   map[string]*ChessRoom
-	Clients map[string]*ChessClient
+	mu        sync.Mutex
+	queue     []*waitingPlayer
+	codeRooms map[string]*waitingPlayer // code -> host waiting for a friend to join
+	Rooms     map[string]*ChessRoom
+	Clients   map[string]*ChessClient
 }
 
 func NewChessHub() *ChessHub {
 	return &ChessHub{
-		Rooms:   make(map[string]*ChessRoom),
-		Clients: make(map[string]*ChessClient),
+		Rooms:     make(map[string]*ChessRoom),
+		Clients:   make(map[string]*ChessClient),
+		codeRooms: make(map[string]*waitingPlayer),
 	}
 }
+
+// ---------- Random matchmaking (unchanged) ----------
 
 func (c *ChessHub) NewUser(userID, name string) chan bool {
 	c.mu.Lock()
@@ -58,21 +67,9 @@ func (c *ChessHub) NewUser(userID, name string) chan bool {
 		p1 := c.queue[0]
 		p2 := c.queue[1]
 		c.queue = c.queue[2:]
+		c.createRoomForPair(p1, p2)
 
-		roomID := uuid.NewString()
-		room := &ChessRoom{ID: roomID, Clients: make(map[string]*ChessClient)}
-		c.Rooms[roomID] = room
-
-		p1Color, p2Color := ColorWhite, ColorBlack
-		if rand.Intn(2) == 0 {
-			p1Color, p2Color = p2Color, p1Color
-		}
-
-		c.Clients[p1.userID] = &ChessClient{ID: p1.userID, Name: p1.name, RoomID: roomID, Color: p1Color}
-		c.Clients[p2.userID] = &ChessClient{ID: p2.userID, Name: p2.name, RoomID: roomID, Color: p2Color}
-		room.Clients[p1.userID] = c.Clients[p1.userID]
-		room.Clients[p2.userID] = c.Clients[p2.userID]
-
+		// Notify both waiting players that they've been matched.
 		p1.result <- true
 		p2.result <- true
 	}
@@ -92,6 +89,91 @@ func (c *ChessHub) CancelWaitingUser(userID string) {
 		}
 	}
 }
+
+// ---------- Room-code (private match) matchmaking ----------
+
+// generateRoomCode makes a random 4-character code, retrying on collision.
+// Caller must hold c.mu.
+func (c *ChessHub) generateRoomCode() string {
+	for {
+		b := make([]byte, 4)
+		rand.Read(b)
+		var sb strings.Builder
+		for _, v := range b {
+			sb.WriteByte(codeCharset[int(v)%len(codeCharset)])
+		}
+		code := sb.String()
+		if _, exists := c.codeRooms[code]; !exists {
+			return code
+		}
+	}
+}
+
+// CreateRoomWithCode registers the caller as waiting host and returns a
+// 4-character code to share with a friend, plus a channel that fires once
+// the friend joins (true) or the host cancels (false).
+func (c *ChessHub) CreateRoomWithCode(userID, name string) (string, chan bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	code := c.generateRoomCode()
+	result := make(chan bool, 1)
+	c.codeRooms[code] = &waitingPlayer{userID: userID, name: name, result: result}
+	return code, result
+}
+
+// CancelRoomCode removes a pending code room if the host disconnects
+// before a friend joins.
+func (c *ChessHub) CancelRoomCode(code string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if p, ok := c.codeRooms[code]; ok {
+		delete(c.codeRooms, code)
+		p.result <- false
+	}
+}
+
+// JoinRoomWithCode is called by the friend. It looks up the code, pairs the
+// two players into a room, and notifies the host via its result channel.
+func (c *ChessHub) JoinRoomWithCode(code, userID, name string) error {
+	code = strings.ToUpper(strings.TrimSpace(code))
+
+	c.mu.Lock()
+	host, ok := c.codeRooms[code]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("room code %s not found", code)
+	}
+	delete(c.codeRooms, code)
+	c.createRoomForPair(host, &waitingPlayer{userID: userID, name: name})
+	c.mu.Unlock()
+
+	host.result <- true
+	return nil
+}
+
+// createRoomForPair does the actual room/client bookkeeping shared by both
+// random matchmaking and code-based matchmaking. Caller must hold c.mu.
+func (c *ChessHub) createRoomForPair(p1, p2 *waitingPlayer) string {
+	roomID := uuid.NewString()
+	room := &ChessRoom{ID: roomID, Clients: make(map[string]*ChessClient)}
+	c.Rooms[roomID] = room
+
+	p1Color, p2Color := ColorWhite, ColorBlack
+	if mrand.Intn(2) == 0 {
+		p1Color, p2Color = p2Color, p1Color
+	}
+
+	c.Clients[p1.userID] = &ChessClient{ID: p1.userID, Name: p1.name, RoomID: roomID, Color: p1Color}
+	c.Clients[p2.userID] = &ChessClient{ID: p2.userID, Name: p2.name, RoomID: roomID, Color: p2Color}
+	room.Clients[p1.userID] = c.Clients[p1.userID]
+	room.Clients[p2.userID] = c.Clients[p2.userID]
+
+	return roomID
+}
+
+// ---------- Shared game logic (unchanged below) ----------
 
 func (c *ChessHub) UserJoined(userID string, conn *websocket.Conn) error {
 	c.mu.Lock()
@@ -122,7 +204,6 @@ func (c *ChessHub) WaitForOthers(userID string) {
 	}
 }
 
-
 func (c *ChessHub) StartGame(userID string) error {
 	c.mu.Lock()
 	client := c.Clients[userID]
@@ -139,7 +220,7 @@ func (c *ChessHub) StartGame(userID string) error {
 
 	if room.gameStarted {
 		c.mu.Unlock()
-	
+
 		<-room.gameDone
 		return room.gameErr
 	}
@@ -156,7 +237,6 @@ func (c *ChessHub) StartGame(userID string) error {
 
 	return gameErr
 }
-
 
 func (c *ChessHub) runGame(roomID string) error {
 	c.mu.Lock()
@@ -209,7 +289,7 @@ func (c *ChessHub) runGame(roomID string) error {
 				mt, data, err := conn.ReadMessage()
 				msgCh <- playerMsg{color: color, mt: mt, data: data, err: err}
 				if err != nil {
-					return 
+					return
 				}
 			}
 		}(color)
@@ -321,7 +401,6 @@ func (c *ChessHub) findDisconnectedPlayer(players map[string]*ChessClient) (stri
 	return "", false
 }
 
-
 func (c *ChessHub) endGameByDisconnect(players map[string]*ChessClient, winnerColor, loserColor string, voluntary bool) error {
 	winner := players[winnerColor]
 	loser := players[loserColor]
@@ -365,6 +444,9 @@ func (c *ChessHub) GetPlayers(roomID string) (map[string]*ChessClient, error) {
 	return players, nil
 }
 
+// ---------- HTTP/WS handlers ----------
+
+// PickRoom = existing random matchmaking entry point (unchanged).
 func (c *ChessHub) PickRoom(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -403,6 +485,78 @@ func (c *ChessHub) PickRoom(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// CreateCodeRoom is the host's entry point: connect, get back a 4-char code,
+// then wait until a friend joins with that code (or disconnect to cancel).
+// e.g. GET /ws/create-room?name=Alice
+func (c *ChessHub) CreateCodeRoom(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	userID := uuid.NewString()
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "Guest-" + userID[:6]
+	}
+
+	code, result := c.CreateRoomWithCode(userID, name)
+	fmt.Println("User", userID, "created room with code:", code)
+
+	// Tell the host their room code so they can share it.
+	conn.WriteMessage(websocket.TextMessage, []byte("code:"+code))
+
+	disconnected := make(chan struct{})
+	go func() {
+		defer close(disconnected)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case ok := <-result:
+		if ok {
+			conn.WriteMessage(websocket.TextMessage, []byte(userID))
+		}
+	case <-disconnected:
+		fmt.Println("Host", userID, "disconnected before friend joined, canceling code", code)
+		c.CancelRoomCode(code)
+	}
+}
+
+// JoinCodeRoom is the friend's entry point: connect with a code, get paired
+// with the host immediately.
+// e.g. GET /ws/join-room/{code}?name=Bob
+func (c *ChessHub) JoinCodeRoom(w http.ResponseWriter, r *http.Request) {
+	code := mux.Vars(r)["code"]
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	userID := uuid.NewString()
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		name = "Guest-" + userID[:6]
+	}
+
+	if err := c.JoinRoomWithCode(code, userID, name); err != nil {
+		fmt.Println("Join with code failed:", err)
+		conn.WriteMessage(websocket.TextMessage, []byte("error: "+err.Error()))
+		return
+	}
+
+	fmt.Println("User", userID, "joined room with code:", code)
+	conn.WriteMessage(websocket.TextMessage, []byte(userID))
+}
+
+
 func (c *ChessHub) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	clientID := mux.Vars(r)["client_id"]
 
@@ -414,7 +568,6 @@ func (c *ChessHub) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	c.WaitForOthers(clientID)
 	c.StartGame(clientID)
 }
-
 
 func (c *ChessHub) cleanupClient(clientID string) {
 	c.mu.Lock()
