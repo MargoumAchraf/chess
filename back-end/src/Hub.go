@@ -122,9 +122,7 @@ func (c *ChessHub) WaitForOthers(userID string) {
 	}
 }
 
-// StartGame est le point d'entrée appelé par CHAQUE joueur (2x au total).
-// sync.Once garantit qu'un seul appel exécute réellement la boucle de jeu ;
-// le deuxième appel bloque jusqu'à la fin de la partie sans rien dupliquer.
+
 func (c *ChessHub) StartGame(userID string) error {
 	c.mu.Lock()
 	client := c.Clients[userID]
@@ -141,8 +139,7 @@ func (c *ChessHub) StartGame(userID string) error {
 
 	if room.gameStarted {
 		c.mu.Unlock()
-		// b7al l gameOnce li kayblock l deuxième caller,
-		// hna khasna n-simuler nafss l comportement: nstna l game ykml
+	
 		<-room.gameDone
 		return room.gameErr
 	}
@@ -160,8 +157,7 @@ func (c *ChessHub) StartGame(userID string) error {
 	return gameErr
 }
 
-// runGame contient toute la logique de la partie. N'est exécutée qu'UNE
-// seule fois par room grâce à gameOnce dans StartGame.
+
 func (c *ChessHub) runGame(roomID string) error {
 	c.mu.Lock()
 	room, ok := c.Rooms[roomID]
@@ -205,7 +201,6 @@ func (c *ChessHub) runGame(roomID string) error {
 		return c.endGameByDisconnect(players, winnerColor, disconnectedColor, false)
 	}
 
-	// --- Goroutine ديال قراءة لكل لاعب، كيصيفطو لنفس الـ channel ---
 	msgCh := make(chan playerMsg, 4)
 	for _, color := range []string{ColorWhite, ColorBlack} {
 		go func(color string) {
@@ -214,7 +209,7 @@ func (c *ChessHub) runGame(roomID string) error {
 				mt, data, err := conn.ReadMessage()
 				msgCh <- playerMsg{color: color, mt: mt, data: data, err: err}
 				if err != nil {
-					return // القراءة توقفت، خرج من الـ goroutine
+					return 
 				}
 			}
 		}(color)
@@ -232,7 +227,6 @@ func (c *ChessHub) runGame(roomID string) error {
 
 		msg := <-msgCh
 
-		// أي قطع اتصال (من أي لاعب) كيتكتشف فوري
 		if msg.err != nil || msg.mt == websocket.CloseMessage {
 			disconnected = true
 			winner := ColorBlack
@@ -245,7 +239,6 @@ func (c *ChessHub) runGame(roomID string) error {
 		moveStr := string(msg.data)
 		println("Received message from player", players[msg.color].Name, ":", moveStr)
 
-		// "quit" مقبولة فوري من أي لاعب، بلا ما تستنى الدور
 		if moveStr == quitMessage {
 			println("Player", players[msg.color].Name, "quit voluntarily.")
 			winner := ColorBlack
@@ -256,7 +249,6 @@ func (c *ChessHub) runGame(roomID string) error {
 			return c.endGameByDisconnect(players, winner, msg.color, true)
 		}
 
-		// رسالة جاية من اللاعب لي ماشي دوره → تجاهلها (ماشي move صالح)
 		if msg.color != expectedColor {
 			if players[msg.color].ActiveConn != nil {
 				players[msg.color].ActiveConn.WriteMessage(
@@ -318,7 +310,6 @@ func (c *ChessHub) runGame(roomID string) error {
 
 	return nil
 }
-// findDisconnectedPlayer retourne la couleur du joueur déconnecté (ActiveConn == nil), s'il y en a un.
 func (c *ChessHub) findDisconnectedPlayer(players map[string]*ChessClient) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -330,8 +321,7 @@ func (c *ChessHub) findDisconnectedPlayer(players map[string]*ChessClient) (stri
 	return "", false
 }
 
-// endGameByDisconnect notifie le gagnant UNE SEULE FOIS (au lieu de 3x avant)
-// et distingue quit volontaire vs déconnexion réseau.
+
 func (c *ChessHub) endGameByDisconnect(players map[string]*ChessClient, winnerColor, loserColor string, voluntary bool) error {
 	winner := players[winnerColor]
 	loser := players[loserColor]
@@ -425,9 +415,7 @@ func (c *ChessHub) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	c.StartGame(clientID)
 }
 
-// cleanupClient marque le client comme déconnecté, et ne supprime la room
-// que quand les DEUX joueurs sont partis, pour éviter que l'adversaire
-// tombe sur une room supprimée pendant qu'il joue encore.
+
 func (c *ChessHub) cleanupClient(clientID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
